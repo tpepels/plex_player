@@ -86,6 +86,7 @@ Other useful optional keys:
 - `LOCATION_NAME` (override location label on idle screen)
 - `DISPLAY_X_SHIFT` (horizontal framebuffer correction)
 - `PROGRESS_UPDATE_SECONDS` (how often elapsed/total updates on now-playing, default `5`)
+- `NO_TRACK_GRACE_SECONDS` (hold now-playing briefly during track-skip session gaps, default `4.0`)
 - `DEBUG_LOGGING` (`1` enables detailed loop/button debug logs)
 - `FONT_PATH_REGULAR`, `FONT_PATH_BOLD`, `FONT_PATH_SYMBOLS` (override font paths)
 

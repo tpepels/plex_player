@@ -7,9 +7,18 @@ Design assumptions:
 """
 
 from dataclasses import dataclass
+from enum import Enum
 from typing import Optional
 
 from PIL import Image
+
+
+class ScreenMode(str, Enum):
+    """High-level render modes used by the main loop state machine."""
+
+    PLAYING = "playing"
+    TRANSITION = "transition"
+    IDLE = "idle"
 
 
 @dataclass

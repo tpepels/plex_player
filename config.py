@@ -36,6 +36,7 @@ class Config:
     poll_seconds: int
     weather_refresh_seconds: int
     progress_update_seconds: int
+    no_track_grace_seconds: float
     display_x_shift: int
     debug_logging: bool
 
@@ -96,6 +97,7 @@ class Config:
             poll_seconds=parse_int("POLL_SECONDS", "3"),
             weather_refresh_seconds=parse_int("WEATHER_REFRESH_SECONDS", "900"),
             progress_update_seconds=parse_int("PROGRESS_UPDATE_SECONDS", "5"),
+            no_track_grace_seconds=parse_float("NO_TRACK_GRACE_SECONDS", "4.0"),
             display_x_shift=parse_int("DISPLAY_X_SHIFT", "0"),
             debug_logging=parse_bool("DEBUG_LOGGING", "0"),
         )
@@ -112,6 +114,8 @@ class Config:
             errors.append("WEATHER_REFRESH_SECONDS must be >= 60")
         if cfg.progress_update_seconds < 1:
             errors.append("PROGRESS_UPDATE_SECONDS must be >= 1")
+        if cfg.no_track_grace_seconds < 0:
+            errors.append("NO_TRACK_GRACE_SECONDS must be >= 0")
         if abs(cfg.display_x_shift) >= max(1, cfg.width):
             errors.append("DISPLAY_X_SHIFT must be smaller than WIDTH")
 

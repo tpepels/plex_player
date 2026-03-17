@@ -22,7 +22,7 @@ from typing import Optional
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 from config import Config
-from models import LoopState, PlexTrack, RuntimeState, WeatherInfo
+from models import LoopState, PlexTrack, RuntimeState, ScreenMode, WeatherInfo
 from plex_service import fetch_cover, fetch_sessions_json, find_player_track, playback_status_text, send_playback_command
 from weather_service import WEATHER_CODES, fetch_weather, get_weather_symbol
 from zoneinfo import ZoneInfo
@@ -246,6 +246,7 @@ def validate_startup():
             "POLL_SECONDS": cfg.poll_seconds,
             "WEATHER_REFRESH_SECONDS": cfg.weather_refresh_seconds,
             "PROGRESS_UPDATE_SECONDS": cfg.progress_update_seconds,
+            "NO_TRACK_GRACE_SECONDS": cfg.no_track_grace_seconds,
             "DISPLAY_X_SHIFT": cfg.display_x_shift,
             "DEBUG_LOGGING": cfg.debug_logging,
         }
@@ -704,6 +705,16 @@ def wait_for_next_cycle() -> None:
         time.sleep(0.5)
 
 
+def resolve_screen_mode(state: LoopState, track: Optional[PlexTrack], now_ts: float) -> ScreenMode:
+    """Resolve the current render mode from playback/session state."""
+
+    if track and track.state == "playing":
+        return ScreenMode.PLAYING
+    if not track and state.last_player_state == "playing" and now_ts < state.no_track_grace_until_ts:
+        return ScreenMode.TRANSITION
+    return ScreenMode.IDLE
+
+
 # Application entrypoint
 def main():
     """Main app loop: fetch state, render frame, and sleep/wake for next cycle."""
@@ -727,12 +738,13 @@ def main():
             )
             track = find_player_track(sessions, PLAYER_NAME) if sessions else None
             update_current_player_context(track)
+            screen_mode = resolve_screen_mode(state, track, now_ts)
 
-            if track and track.state == "playing":
+            if screen_mode == ScreenMode.PLAYING and track is not None:
                 # Keep a short grace window for transient session gaps during skips.
                 state.no_track_grace_until_ts = now_ts + NO_TRACK_GRACE_SECONDS
                 render_playing_frame(state, track, now_ts)
-            elif not track and state.last_player_state == "playing" and now_ts < state.no_track_grace_until_ts:
+            elif screen_mode == ScreenMode.TRANSITION:
                 # Preserve current now-playing frame while Plex transitions between tracks.
                 pass
             else:
