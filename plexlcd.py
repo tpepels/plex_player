@@ -22,7 +22,7 @@ from typing import Optional
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 from config import Config
-from models import LoopState, PlexTrack, WeatherInfo
+from models import LoopState, PlexTrack, RuntimeState, WeatherInfo
 from plex_service import fetch_cover, fetch_sessions_json, find_player_track, playback_status_text, send_playback_command
 from weather_service import WEATHER_CODES, fetch_weather, get_weather_symbol
 from zoneinfo import ZoneInfo
@@ -102,13 +102,7 @@ DEBUG_LOGGING = env("DEBUG_LOGGING", "0").strip().lower() in {"1", "true", "yes"
 HTTP_TIMEOUT = 10
 COVER_RETRY_SECONDS = 20
 BUTTON_DEVICES = []
-CURRENT_TARGET_CLIENT_ID: Optional[str] = None
-CURRENT_PLAYER_ADDRESS: Optional[str] = None
-CURRENT_PLAYER_PORT: int = 32500
-CURRENT_PLAYBACK_STATE: str = "unknown"
-TOAST_TEXT: Optional[str] = None
-TOAST_UNTIL_TS: float = 0.0
-COMMAND_COUNTER = 1
+RUNTIME_STATE = RuntimeState()
 REFRESH_EVENT = threading.Event()
 
 
@@ -188,19 +182,19 @@ def format_ms(ms: Optional[int]) -> str:
 
 
 def draw_toast(img: Image.Image) -> Image.Image:
-    if not TOAST_TEXT or time.time() > TOAST_UNTIL_TS:
+    if not RUNTIME_STATE.toast_text or time.monotonic() > RUNTIME_STATE.toast_until_ts:
         return img
 
     base = img.convert("RGBA")
     overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
     od = ImageDraw.Draw(overlay)
-    bbox = od.textbbox((0, 0), TOAST_TEXT, font=FONT_SMALL)
+    bbox = od.textbbox((0, 0), RUNTIME_STATE.toast_text, font=FONT_SMALL)
     tw = bbox[2] - bbox[0]
     th = bbox[3] - bbox[1]
     px = max(0, (WIDTH - tw) // 2 - 8)
     py = 4
     od.rounded_rectangle((px, py, px + tw + 16, py + th + 10), radius=6, fill=(0, 0, 0, 150))
-    od.text((px + 8, py + 5), TOAST_TEXT, font=FONT_SMALL, fill="#ffffff")
+    od.text((px + 8, py + 5), RUNTIME_STATE.toast_text, font=FONT_SMALL, fill="#ffffff")
     return Image.alpha_composite(base, overlay).convert("RGB")
 
 
@@ -248,25 +242,22 @@ def validate_startup():
 
 def next_command_id() -> int:
     """Return monotonically increasing command id for Plex playback endpoints."""
-
-    global COMMAND_COUNTER
-    COMMAND_COUNTER += 1
-    return COMMAND_COUNTER
+    RUNTIME_STATE.command_counter += 1
+    return RUNTIME_STATE.command_counter
 
 
 def send_plex_playback_command(action: str):
     """Send a playback command to the active Plexamp player."""
     # Assumption: toasts reflect the intended action immediately after accepted request.
-    global TOAST_TEXT, TOAST_UNTIL_TS
     cmd_id = next_command_id()
     sent_ok = send_playback_command(
         action=action,
         plex_server=PLEX_SERVER,
         plex_token=PLEX_TOKEN,
         controller_client_id=CONTROLLER_CLIENT_ID,
-        target_client_id=CURRENT_TARGET_CLIENT_ID,
-        player_addr=CURRENT_PLAYER_ADDRESS,
-        player_port=CURRENT_PLAYER_PORT,
+        target_client_id=RUNTIME_STATE.current_target_client_id,
+        player_addr=RUNTIME_STATE.current_player_address,
+        player_port=RUNTIME_STATE.current_player_port,
         command_id=cmd_id,
         timeout=HTTP_TIMEOUT,
         log_info=lambda msg: log_message("buttons", msg, level="INFO", stderr=True),
@@ -276,14 +267,14 @@ def send_plex_playback_command(action: str):
     )
     if sent_ok:
         if action == "next":
-            TOAST_TEXT = "Skipped"
+            RUNTIME_STATE.toast_text = "Skipped"
         elif action == "stop":
-            TOAST_TEXT = "Stopped"
+            RUNTIME_STATE.toast_text = "Stopped"
         elif action == "play_pause":
-            TOAST_TEXT = "Paused" if CURRENT_PLAYBACK_STATE == "playing" else "Playing"
+            RUNTIME_STATE.toast_text = "Paused" if RUNTIME_STATE.current_playback_state == "playing" else "Playing"
         else:
-            TOAST_TEXT = "Command sent"
-        TOAST_UNTIL_TS = time.time() + 1.0
+            RUNTIME_STATE.toast_text = "Command sent"
+        RUNTIME_STATE.toast_until_ts = time.monotonic() + 1.0
         REFRESH_EVENT.set()
 
 
@@ -306,7 +297,7 @@ def setup_gpio_buttons():
         button = Button(pin, pull_up=True, bounce_time=BUTTON_BOUNCE_TIME)
         def _make_handler(action_name, pin_no):
             def handler():
-                print(f"[buttons] GPIO pin {pin_no} pressed → action={action_name}  client_id={CURRENT_TARGET_CLIENT_ID!r}", file=sys.stderr, flush=True)
+                print(f"[buttons] GPIO pin {pin_no} pressed → action={action_name}  client_id={RUNTIME_STATE.current_target_client_id!r}", file=sys.stderr, flush=True)
                 send_plex_playback_command(action_name)
             return handler
         button.when_pressed = _make_handler(action, pin)
@@ -509,7 +500,7 @@ def render_now_playing(cover: Image.Image, track: PlexTrack) -> Image.Image:
     bg = fit_cover(cover, WIDTH, HEIGHT)
     overlay = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
     od = ImageDraw.Draw(overlay)
-    od.rectangle((0, HEIGHT - 82, WIDTH, HEIGHT), fill=(0, 0, 0, 150))
+    od.rectangle((0, HEIGHT - 90, WIDTH, HEIGHT), fill=(0, 0, 0, 150))
     composed = Image.alpha_composite(bg.convert("RGBA"), overlay).convert("RGB")
     draw = ImageDraw.Draw(composed)
 
@@ -517,13 +508,13 @@ def render_now_playing(cover: Image.Image, track: PlexTrack) -> Image.Image:
     text_max_width = WIDTH - text_x - 8
     title = truncate(draw, track.title, FONT_TRACK, text_max_width)
     artist = truncate(draw, track.artist, FONT_META, text_max_width)
-    draw.text((text_x, HEIGHT - 74), title, font=FONT_TRACK, fill="white")
-    draw.text((text_x, HEIGHT - 46), artist, font=FONT_META, fill="#dddddd")
+    draw.text((text_x, HEIGHT - 80), title, font=FONT_TRACK, fill="white")
+    draw.text((text_x, HEIGHT - 52), artist, font=FONT_META, fill="#dddddd")
 
     if track.duration_ms and track.duration_ms > 0:
         elapsed = max(0, min(track.elapsed_ms or 0, track.duration_ms))
         bar_x = text_x
-        bar_y = HEIGHT - 10
+        bar_y = HEIGHT - 14
         bar_w = WIDTH - text_x - 8
         bar_h = 2
         fill_w = int((elapsed / track.duration_ms) * bar_w)
@@ -580,12 +571,10 @@ def refresh_weather_if_due(state: LoopState, now_ts: float) -> None:
 
 def update_current_player_context(track: Optional[PlexTrack]) -> None:
     """Update globals used by button handlers from latest track context."""
-
-    global CURRENT_TARGET_CLIENT_ID, CURRENT_PLAYER_ADDRESS, CURRENT_PLAYER_PORT, CURRENT_PLAYBACK_STATE
-    CURRENT_TARGET_CLIENT_ID = track.target_client_identifier if track else None
-    CURRENT_PLAYER_ADDRESS = track.player_address if track else None
-    CURRENT_PLAYER_PORT = track.player_port if track else 32500
-    CURRENT_PLAYBACK_STATE = track.state if track else "unknown"
+    RUNTIME_STATE.current_target_client_id = track.target_client_identifier if track else None
+    RUNTIME_STATE.current_player_address = track.player_address if track else None
+    RUNTIME_STATE.current_player_port = track.player_port if track else 32500
+    RUNTIME_STATE.current_playback_state = track.state if track else "unknown"
 
 
 def render_playing_frame(state: LoopState, track: PlexTrack, now_ts: float) -> None:
@@ -703,7 +692,7 @@ def main():
 
     while True:
         try:
-            now_ts = time.time()
+            now_ts = time.monotonic()
             refresh_weather_if_due(state, now_ts)
 
             sessions = fetch_sessions_json(

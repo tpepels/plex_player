@@ -65,3 +65,21 @@ class LoopState:
     last_elapsed_second: Optional[int] = None
     cached_cover: Optional[Image.Image] = None
     next_cover_retry_ts: float = 0.0
+
+
+@dataclass
+class RuntimeState:
+    """Mutable cross-cutting app state used by callbacks and UI overlays.
+
+    Assumptions:
+    - This holds fast-changing runtime values that are not persisted.
+    - A single instance is shared by loop + button callbacks.
+    """
+
+    current_target_client_id: Optional[str] = None
+    current_player_address: Optional[str] = None
+    current_player_port: int = 32500
+    current_playback_state: str = "unknown"
+    toast_text: Optional[str] = None
+    toast_until_ts: float = 0.0
+    command_counter: int = 1
