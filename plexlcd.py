@@ -100,6 +100,7 @@ CURRENT_TARGET_CLIENT_ID: Optional[str] = None
 CURRENT_PLAYER_ADDRESS: Optional[str] = None
 CURRENT_PLAYER_PORT: int = 32500
 COMMAND_COUNTER = 1
+REFRESH_EVENT = __import__('threading').Event()
 
 FONT_PATH_REGULAR = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 FONT_PATH_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
@@ -306,6 +307,7 @@ def send_plex_playback_command(action: str):
         print(f"[buttons] Response {resp.status_code}: {resp.text[:200]!r}", file=sys.stderr, flush=True)
         resp.raise_for_status()
         print(f"[buttons] Sent {action} OK", file=sys.stderr, flush=True)
+        REFRESH_EVENT.set()
     except Exception as exc:
         print(f"[buttons] Failed to send {action}: {exc}", file=sys.stderr, flush=True)
 
@@ -682,7 +684,10 @@ def main():
             print(f"[main] {exc}", file=sys.stderr)
             time.sleep(5)
 
-        time.sleep(POLL_SECONDS)
+        REFRESH_EVENT.wait(timeout=POLL_SECONDS)
+        if REFRESH_EVENT.is_set():
+            REFRESH_EVENT.clear()
+            time.sleep(0.5)  # Give Plexamp time to apply the command before re-polling
 
 
 if __name__ == "__main__":

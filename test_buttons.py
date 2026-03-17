@@ -147,7 +147,12 @@ for pin, action in PINS.items():
         btn = Button(pin, pull_up=True, bounce_time=BOUNCE)
         def _handler(a=action, p=pin):
             print(f"\n*** GPIO PIN {p} PRESSED  action={a} ***")
-                test_plex_command(a, player_addr, player_port)
+            test_plex_command(a, player_addr, player_port)
+        btn.when_pressed = _handler
+        buttons.append(btn)
+        print(f"[gpio] Pin {pin} → {action}  OK")
+    except Exception as e:
+        print(f"[gpio] Pin {pin} FAILED: {e}")
 
 print()
 print("Ready. Press a physical button (Ctrl+C to quit) …")
