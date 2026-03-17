@@ -180,7 +180,7 @@ def load_font(path: str, size: int):
 FONT_TIME = load_font(FONT_PATH_BOLD, 54)
 FONT_WEATHER = load_font(FONT_PATH_REGULAR, 24)
 FONT_SMALL = load_font(FONT_PATH_REGULAR, 18)
-FONT_TRACK = load_font(FONT_PATH_BOLD, 22)
+FONT_TRACK = load_font(FONT_PATH_BOLD, 18)
 FONT_META = load_font(FONT_PATH_REGULAR, 18)
 FONT_LABEL = load_font(FONT_PATH_REGULAR, 12)
 
@@ -360,7 +360,6 @@ def draw_button_labels(img: Image.Image, y: int, fill: str = "#d8d8d8", is_playi
     if not BUTTONS_ENABLED:
         return img
 
-    draw = ImageDraw.Draw(img)
     labels = ["▌▌" if is_playing else "▶", "■", ">>|"]
     x = 6
     y_positions = [
@@ -369,6 +368,22 @@ def draw_button_labels(img: Image.Image, y: int, fill: str = "#d8d8d8", is_playi
         HEIGHT * BUTTON_LABEL_NEXT_Y_PERCENT // 100,
     ]
 
+    # Draw semi-transparent circle backgrounds on a composited overlay
+    overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    od = ImageDraw.Draw(overlay)
+    radius = 10
+    for label_y in y_positions:
+        # Measure approximate text size to centre the circle on the glyph
+        bbox = ImageDraw.Draw(img).textbbox((x, label_y), "▌▌", font=FONT_LABEL)
+        cx = x + (bbox[2] - bbox[0]) // 2
+        cy = label_y + (bbox[3] - bbox[1]) // 2
+        od.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), fill=(0, 0, 0, 120))
+
+    base = img.convert("RGBA")
+    base = Image.alpha_composite(base, overlay)
+    img = base.convert("RGB")
+
+    draw = ImageDraw.Draw(img)
     for label, label_y in zip(labels, y_positions):
         draw.text((x, label_y), label, font=FONT_LABEL, fill=fill)
 
@@ -596,6 +611,7 @@ def main():
     last_weather = None
     last_weather_fetch = 0.0
     last_thumb_path = None
+    last_track_title = None
     last_player_state = None
     last_idle_minute = None
     cached_cover = None
@@ -620,22 +636,35 @@ def main():
             # Player is actively playing
             if track and track.state == "playing":
                 # Fetch on track/state change, or retry after cooldown when cover fetch previously failed.
-                needs_refresh = track.thumb_path != last_thumb_path or last_player_state != "playing"
+                needs_refresh = (
+                    track.thumb_path != last_thumb_path
+                    or track.title != last_track_title
+                    or last_player_state != "playing"
+                )
                 needs_retry = (
                     not cached_cover
                     and track.thumb_path == last_thumb_path
                     and now_ts >= next_cover_retry_ts
                 )
+                print(
+                    f"[loop] title={track.title!r} last_title={last_track_title!r} "
+                    f"thumb_changed={track.thumb_path != last_thumb_path} "
+                    f"needs_refresh={needs_refresh} needs_retry={needs_retry} "
+                    f"have_cover={cached_cover is not None}",
+                    file=sys.stderr, flush=True,
+                )
 
                 if needs_refresh or needs_retry:
-                    cached_cover = None
-                    if track.thumb_path:
+                    if track.thumb_path != last_thumb_path:
+                        cached_cover = None  # new album art needed
+                    if not cached_cover and track.thumb_path:
                         cached_cover = fetch_plex_cover(track.thumb_path)
                     
                     if cached_cover:
                         try:
                             write_framebuffer(render_now_playing(cached_cover, track))
                             last_thumb_path = track.thumb_path
+                            last_track_title = track.title
                             last_player_state = "playing"
                             next_cover_retry_ts = 0.0
                         except Exception as e:
@@ -652,6 +681,7 @@ def main():
                         try:
                             write_framebuffer(img)
                             last_thumb_path = track.thumb_path
+                            last_track_title = track.title
                             last_player_state = "playing"
                         except Exception as e:
                             print(f"[framebuffer] Failed to write placeholder: {e}")
@@ -665,6 +695,7 @@ def main():
                         last_idle_minute = minute_key
                         last_player_state = "idle"
                         last_thumb_path = None
+                        last_track_title = None
                         cached_cover = None
                         next_cover_retry_ts = 0.0
                     except Exception as e:
