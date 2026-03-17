@@ -594,6 +594,8 @@ def render_playing_frame(state: LoopState, track: PlexTrack, now_ts: float) -> N
         or track.title != state.last_track_title
         or state.last_player_state != "playing"
     )
+    elapsed_second = (track.elapsed_ms // 1000) if track.elapsed_ms is not None else None
+    progress_changed = elapsed_second != state.last_elapsed_second
     needs_retry = (
         not state.cached_cover
         and track.thumb_path == state.last_thumb_path
@@ -605,12 +607,13 @@ def render_playing_frame(state: LoopState, track: PlexTrack, now_ts: float) -> N
         (
             f"title={track.title!r} last_title={state.last_track_title!r} "
             f"thumb_changed={track.thumb_path != state.last_thumb_path} "
+            f"progress_changed={progress_changed} "
             f"needs_refresh={needs_refresh} needs_retry={needs_retry} "
             f"have_cover={state.cached_cover is not None}"
         ),
     )
 
-    if not (needs_refresh or needs_retry):
+    if not (needs_refresh or needs_retry or progress_changed):
         return
 
     if track.thumb_path != state.last_thumb_path:
@@ -633,6 +636,7 @@ def render_playing_frame(state: LoopState, track: PlexTrack, now_ts: float) -> N
             state.last_thumb_path = track.thumb_path
             state.last_track_title = track.title
             state.last_player_state = "playing"
+            state.last_elapsed_second = elapsed_second
             state.next_cover_retry_ts = 0.0
             return
         write_fallback_placeholder("Render Error", context="now-playing render")
@@ -643,6 +647,7 @@ def render_playing_frame(state: LoopState, track: PlexTrack, now_ts: float) -> N
         state.last_thumb_path = track.thumb_path
         state.last_track_title = track.title
         state.last_player_state = "playing"
+        state.last_elapsed_second = elapsed_second
 
 
 def render_idle_frame(state: LoopState, track: Optional[PlexTrack]) -> None:
@@ -663,6 +668,7 @@ def render_idle_frame(state: LoopState, track: Optional[PlexTrack]) -> None:
         state.last_player_state = idle_state
         state.last_thumb_path = None
         state.last_track_title = None
+        state.last_elapsed_second = None
         state.cached_cover = None
         state.next_cover_retry_ts = 0.0
         return

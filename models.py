@@ -62,5 +62,6 @@ class LoopState:
     last_track_title: Optional[str] = None
     last_player_state: Optional[str] = None
     last_idle_minute: Optional[str] = None
+    last_elapsed_second: Optional[int] = None
     cached_cover: Optional[Image.Image] = None
     next_cover_retry_ts: float = 0.0
