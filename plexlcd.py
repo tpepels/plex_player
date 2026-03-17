@@ -470,18 +470,22 @@ def render_idle(
             details.append(f"H {weather.humidity_pct}%")
         if weather.temp_min_c is not None and weather.temp_max_c is not None:
             details.append(f"L/H {round(weather.temp_min_c):.0f}/{round(weather.temp_max_c):.0f}C")
+        footer_row = 194
         if details:
-            text_center(draw, 196, "  ".join(details), FONT_LABEL, fill="#bfbfbf")
+            text_center(draw, footer_row, "  ".join(details), FONT_PROGRESS, fill="#bfbfbf")
+            footer_row += 14
 
         if weather.next_hour_weather_code is not None and weather.next_hour_temp_c is not None:
             next_label = WEATHER_CODES.get(weather.next_hour_weather_code, "Weather")
             next_text = f"Next hr: {next_label} {round(weather.next_hour_temp_c):.0f}C"
-            text_center(draw, 210, next_text, FONT_LABEL, fill="#a8a8a8")
+            text_center(draw, footer_row, next_text, FONT_PROGRESS, fill="#a8a8a8")
+            footer_row += 14
     else:
         text_center(draw, 152, "Weather unavailable", FONT_SMALL, fill="#888888")
 
     if playback_status:
-        text_center(draw, 204, f"Status: {playback_status}", FONT_SMALL, fill="#9f9f9f")
+        status_y = 222 if weather else 204
+        text_center(draw, status_y, f"Status: {playback_status}", FONT_PROGRESS, fill="#9f9f9f")
 
     idle_actions: tuple[str, ...] = ()
     if playback_state == "paused":
