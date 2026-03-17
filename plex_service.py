@@ -8,6 +8,7 @@ Design assumptions:
 
 import io
 import time
+import xml.etree.ElementTree as ET
 from typing import Callable, Optional
 
 import requests
@@ -195,6 +196,66 @@ def fetch_cover(
             else:
                 log_error(f"Cover failed after {max_retries} attempts: {exc}")
     return None
+
+
+def fetch_player_timeline_state(
+    player_addr: Optional[str],
+    player_port: int,
+    plex_token: str,
+    timeout: int,
+    log_warn: Callable[[str], None],
+) -> Optional[dict]:
+    """Poll Plexamp player's timeline endpoint for current playback state.
+
+    Returns a dict with optional keys: `state`, `time_ms`, `duration_ms`.
+    """
+
+    if not player_addr or not plex_token:
+        return None
+
+    try:
+        url = f"http://{player_addr}:{player_port}/player/timeline/poll"
+        resp = requests.get(
+            url,
+            headers={
+                "Accept": "application/xml, text/xml, */*",
+                "X-Plex-Token": plex_token,
+            },
+            params={
+                "wait": 0,
+                "commandID": 1,
+                "type": "music",
+            },
+            timeout=timeout,
+        )
+        resp.raise_for_status()
+
+        root = ET.fromstring(resp.text)
+        timeline = root.find("Timeline")
+        if timeline is None:
+            return None
+
+        state = str(timeline.attrib.get("state") or "").strip().lower() or None
+        time_raw = timeline.attrib.get("time")
+        duration_raw = timeline.attrib.get("duration")
+
+        try:
+            time_ms = int(time_raw) if time_raw is not None else None
+        except (TypeError, ValueError):
+            time_ms = None
+        try:
+            duration_ms = int(duration_raw) if duration_raw is not None else None
+        except (TypeError, ValueError):
+            duration_ms = None
+
+        return {
+            "state": state,
+            "time_ms": time_ms,
+            "duration_ms": duration_ms,
+        }
+    except Exception as exc:
+        log_warn(f"Timeline poll failed: {exc}")
+        return None
 
 
 def send_playback_command(

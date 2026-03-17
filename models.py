@@ -122,6 +122,7 @@ class PlaybackSnapshot:
     no_track_grace_until_ts: float
     force_idle_until_ts: float
     pending_command: Optional[PendingCommand]
+    timeline_state: Optional[str] = None
 
 
 @dataclass

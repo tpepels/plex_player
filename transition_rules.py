@@ -4,6 +4,7 @@ This module contains policy decisions only; rendering and I/O stay elsewhere.
 """
 
 from typing import Optional
+from dataclasses import replace
 
 from models import LoopState, PendingCommand, PlaybackSnapshot, PlexTrack, RuntimeState, TransitionDecision, TransitionMode
 
@@ -12,6 +13,10 @@ def _normalized_state(track: Optional[PlexTrack]) -> str:
     if not track:
         return "unknown"
     return str(track.state or "unknown").strip().lower()
+
+
+def _normalized_timeline_state(state: Optional[str]) -> str:
+    return str(state or "").strip().lower()
 
 
 def _track_identity(track: PlexTrack) -> str:
@@ -73,6 +78,7 @@ def resolve_transition(snapshot: PlaybackSnapshot, *, no_track_grace_seconds: fl
 
     no_track_grace_seconds = max(0.0, float(no_track_grace_seconds))
     track_state = _normalized_state(snapshot.track)
+    timeline_state = _normalized_timeline_state(snapshot.timeline_state)
     clear_pending = False
 
     pending = snapshot.pending_command
@@ -89,6 +95,32 @@ def resolve_transition(snapshot: PlaybackSnapshot, *, no_track_grace_seconds: fl
             clear_force_idle=True,
             clear_pending_command=True,
         )
+
+    # Timeline tie-break rule: if player timeline says not playing, prefer that over
+    # stale session-level "playing".
+    if timeline_state in {"paused", "stopped", "none"}:
+        if snapshot.track and track_state == "playing":
+            if timeline_state == "paused":
+                idle_track = replace(snapshot.track, state="paused")
+            else:
+                idle_track = None
+            return TransitionDecision(
+                mode=TransitionMode.IDLE,
+                reason="timeline_not_playing",
+                idle_track=idle_track,
+                clear_pending_command=clear_pending,
+            )
+        if (
+            not snapshot.track
+            and str(snapshot.last_player_state or "").strip().lower() == "playing"
+        ):
+            return TransitionDecision(
+                mode=TransitionMode.IDLE,
+                reason="timeline_not_playing",
+                idle_track=None,
+                set_no_track_grace_until_ts=0.0,
+                clear_pending_command=clear_pending,
+            )
 
     if snapshot.now_ts < snapshot.force_idle_until_ts:
         return TransitionDecision(

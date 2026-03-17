@@ -23,7 +23,14 @@ from typing import Optional
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 from config import Config
 from models import LoopState, PlaybackSnapshot, PlexTrack, RuntimeState, TransitionMode, WeatherInfo
-from plex_service import fetch_cover, fetch_sessions_json, find_player_track, playback_status_text, send_playback_command
+from plex_service import (
+    fetch_cover,
+    fetch_player_timeline_state,
+    fetch_sessions_json,
+    find_player_track,
+    playback_status_text,
+    send_playback_command,
+)
 from transition_rules import apply_button_rules, compute_display_elapsed_ms, resolve_transition
 from weather_service import WEATHER_CODES, fetch_weather, get_weather_symbol
 from zoneinfo import ZoneInfo
@@ -597,10 +604,14 @@ def refresh_weather_if_due(state: LoopState, now_ts: float) -> None:
 
 def update_current_player_context(track: Optional[PlexTrack]) -> None:
     """Update globals used by button handlers from latest track context."""
-    RUNTIME_STATE.current_target_client_id = track.target_client_identifier if track else None
-    RUNTIME_STATE.current_player_address = track.player_address if track else None
-    RUNTIME_STATE.current_player_port = track.player_port if track else 32500
-    RUNTIME_STATE.current_playback_state = track.state if track else "unknown"
+    if track:
+        RUNTIME_STATE.current_target_client_id = track.target_client_identifier
+        RUNTIME_STATE.current_player_address = track.player_address
+        RUNTIME_STATE.current_player_port = track.player_port
+        RUNTIME_STATE.current_playback_state = track.state
+    else:
+        # Preserve last known player endpoint for direct timeline polling.
+        RUNTIME_STATE.current_playback_state = "unknown"
 
 
 def render_playing_frame(state: LoopState, track: PlexTrack, now_ts: float) -> None:
@@ -751,6 +762,23 @@ def main():
             )
             track = find_player_track(sessions, PLAYER_NAME) if sessions else None
             update_current_player_context(track)
+            timeline_state: Optional[str] = None
+
+            # Collect direct Plexamp timeline state as additional rule input.
+            if (
+                (track and track.state == "playing")
+                or (not track and str(state.last_player_state or "").strip().lower() == "playing")
+            ):
+                timeline = fetch_player_timeline_state(
+                    player_addr=RUNTIME_STATE.current_player_address,
+                    player_port=RUNTIME_STATE.current_player_port,
+                    plex_token=PLEX_TOKEN,
+                    timeout=HTTP_TIMEOUT,
+                    log_warn=lambda msg: log_message("plex", msg, level="WARN", stderr=True),
+                )
+                if timeline:
+                    timeline_state = str(timeline.get("state") or "").strip().lower() or None
+
             snapshot = PlaybackSnapshot(
                 now_ts=now_ts,
                 track=track,
@@ -758,6 +786,7 @@ def main():
                 no_track_grace_until_ts=state.no_track_grace_until_ts,
                 force_idle_until_ts=RUNTIME_STATE.force_idle_until_ts,
                 pending_command=RUNTIME_STATE.pending_command,
+                timeline_state=timeline_state,
             )
             decision = resolve_transition(snapshot, no_track_grace_seconds=NO_TRACK_GRACE_SECONDS)
 
