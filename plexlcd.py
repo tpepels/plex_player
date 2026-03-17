@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import io
 import os
 import socket
 import sys
@@ -8,10 +7,11 @@ import time
 from datetime import datetime
 from typing import Optional
 
-import requests
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 from config import Config
 from models import LoopState, PlexTrack, WeatherInfo
+from plex_service import fetch_cover, fetch_sessions_json, find_player_track, playback_status_text, send_playback_command
+from weather_service import WEATHER_CODES, fetch_weather, get_weather_symbol
 from zoneinfo import ZoneInfo
 
 try:
@@ -93,7 +93,7 @@ COMMAND_COUNTER = 1
 REFRESH_EVENT = threading.Event()
 
 
-# Font and weather display lookup tables
+# Font lookup helpers
 def first_existing_font(*candidates: str) -> str:
     for path in candidates:
         if path and os.path.isfile(path):
@@ -119,61 +119,6 @@ FONT_PATH_SYMBOLS = first_existing_font(
 )
 
 
-WEATHER_CODES = {
-    0: "Clear",
-    1: "Mainly clear",
-    2: "Partly cloudy",
-    3: "Overcast",
-    45: "Fog",
-    48: "Rime fog",
-    51: "Light drizzle",
-    53: "Drizzle",
-    55: "Dense drizzle",
-    61: "Light rain",
-    63: "Rain",
-    65: "Heavy rain",
-    71: "Light snow",
-    73: "Snow",
-    75: "Heavy snow",
-    77: "Snow grains",
-    80: "Rain showers",
-    81: "Rain showers",
-    82: "Violent showers",
-    85: "Snow showers",
-    86: "Heavy snow showers",
-    95: "Thunderstorm",
-    96: "T-storm + hail",
-    99: "Heavy hail",
-}
-
-WEATHER_SYMBOLS = {
-    0: ("☀", "☾"),
-    1: ("🌤", "☾"),
-    2: ("⛅", "☁"),
-    3: ("☁", "☁"),
-    45: ("🌫", "🌫"),
-    48: ("🌫", "🌫"),
-    51: ("🌦", "🌧"),
-    53: ("🌦", "🌧"),
-    55: ("🌧", "🌧"),
-    61: ("🌦", "🌧"),
-    63: ("🌧", "🌧"),
-    65: ("🌧", "🌧"),
-    71: ("🌨", "🌨"),
-    73: ("🌨", "🌨"),
-    75: ("❄", "❄"),
-    77: ("❄", "❄"),
-    80: ("🌦", "🌧"),
-    81: ("🌧", "🌧"),
-    82: ("⛈", "⛈"),
-    85: ("🌨", "🌨"),
-    86: ("❄", "❄"),
-    95: ("⛈", "⛈"),
-    96: ("⛈", "⛈"),
-    99: ("⛈", "⛈"),
-}
-
-
 def log_message(component: str, message: str, *, level: str = "INFO", stderr: bool = False) -> None:
     stream = sys.stderr if stderr else sys.stdout
     print(f"[{component}] [{level}] {message}", file=stream, flush=True)
@@ -189,44 +134,6 @@ def log_exception(component: str, context: str, exc: Exception, *, level: str = 
 
 
 # State normalization and UI label helpers
-def normalize_playback_state(item: dict) -> str:
-    """Normalize Plex session/player state with enough detail for UI text."""
-    player = item.get("Player", {})
-    session = item.get("Session", {})
-
-    raw_states = [
-        str(player.get("state") or "").strip().lower(),
-        str(session.get("state") or "").strip().lower(),
-    ]
-
-    if "playing" in raw_states:
-        return "playing"
-    for state in ("paused", "stopped", "buffering", "idle"):
-        if state in raw_states:
-            return state
-    for state in raw_states:
-        if state and state != "none":
-            return state
-    return "unknown"
-
-
-def playback_status_text(state: str) -> str:
-    mapping = {
-        "playing": "Playing",
-        "paused": "Paused",
-        "stopped": "Stopped",
-        "buffering": "Buffering",
-        "idle": "Stopped",
-        "unknown": "Stopped",
-    }
-    return mapping.get(state, state.capitalize() if state else "Stopped")
-
-
-def get_weather_symbol(weather_code: int, is_day: int) -> str:
-    day_symbol, night_symbol = WEATHER_SYMBOLS.get(weather_code, ("?", "?"))
-    return day_symbol if is_day else night_symbol
-
-
 def get_location_label() -> str:
     if LOCATION_NAME:
         return LOCATION_NAME
@@ -299,54 +206,24 @@ def next_command_id() -> int:
 
 def send_plex_playback_command(action: str):
     """Send a playback command to the active Plexamp player."""
-    target_client_id = CURRENT_TARGET_CLIENT_ID
-    player_addr = CURRENT_PLAYER_ADDRESS
-    player_port = CURRENT_PLAYER_PORT
-
-    if not target_client_id:
-        log_message("buttons", f"Ignoring {action}: no active Plex target client", level="WARN", stderr=True)
-        return
-
-    endpoint_map = {
-        "play_pause": "playPause",
-        "stop": "stop",
-        "next": "skipNext",
-    }
-    endpoint = endpoint_map.get(action)
-    if not endpoint:
-        log_message("buttons", f"Ignoring unknown action: {action}", level="WARN", stderr=True)
-        return
-
-    # Send directly to the Plexamp player, not via the server
-    if player_addr:
-        base_url = f"http://{player_addr}:{player_port}"
-    else:
-        base_url = PLEX_SERVER
-        log_message("buttons", "No player address known, falling back to server URL", level="WARN", stderr=True)
-
-    url = f"{base_url}/player/playback/{endpoint}"
     cmd_id = next_command_id()
-    log_message("buttons", f"{action} -> GET {url} commandID={cmd_id}", level="INFO", stderr=True)
-    try:
-        resp = requests.get(
-            url,
-            headers={
-                "Accept": "application/json",
-                "X-Plex-Token": PLEX_TOKEN,
-                "X-Plex-Client-Identifier": CONTROLLER_CLIENT_ID,
-            },
-            params={
-                "type": "music",
-                "commandID": cmd_id,
-            },
-            timeout=HTTP_TIMEOUT,
-        )
-        log_debug("buttons", f"Response {resp.status_code}: {resp.text[:200]!r}")
-        resp.raise_for_status()
-        log_message("buttons", f"Sent {action} OK", level="INFO", stderr=True)
+    sent_ok = send_playback_command(
+        action=action,
+        plex_server=PLEX_SERVER,
+        plex_token=PLEX_TOKEN,
+        controller_client_id=CONTROLLER_CLIENT_ID,
+        target_client_id=CURRENT_TARGET_CLIENT_ID,
+        player_addr=CURRENT_PLAYER_ADDRESS,
+        player_port=CURRENT_PLAYER_PORT,
+        command_id=cmd_id,
+        timeout=HTTP_TIMEOUT,
+        log_info=lambda msg: log_message("buttons", msg, level="INFO", stderr=True),
+        log_warn=lambda msg: log_message("buttons", msg, level="WARN", stderr=True),
+        log_debug=lambda msg: log_debug("buttons", msg),
+        log_error=lambda msg: log_message("buttons", msg, level="ERROR", stderr=True),
+    )
+    if sent_ok:
         REFRESH_EVENT.set()
-    except Exception as exc:
-        log_exception("buttons", f"Failed to send {action}", exc)
 
 
 def setup_gpio_buttons():
@@ -488,166 +365,28 @@ def write_framebuffer(img: Image.Image):
         raise
 
 
-# External I/O: weather + Plex API calls
-def fetch_weather() -> Optional[WeatherInfo]:
-    """Fetch weather with retry logic. Returns None on failure (uses cached value)."""
-    url = (
-        "https://api.open-meteo.com/v1/forecast"
-        f"?latitude={LATITUDE}&longitude={LONGITUDE}"
-        "&current=temperature_2m,weather_code,is_day"
-        f"&timezone={TIMEZONE}"
-    )
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            r = requests.get(url, timeout=HTTP_TIMEOUT)
-            r.raise_for_status()
-            cur = r.json()["current"]
-            return WeatherInfo(
-                temp_c=float(cur["temperature_2m"]),
-                weather_code=int(cur["weather_code"]),
-                is_day=int(cur["is_day"]),
-            )
-        except Exception as exc:
-            if attempt < max_retries - 1:
-                backoff = 2 ** attempt
-                log_message(
-                    "weather",
-                    f"Attempt {attempt + 1}/{max_retries} failed: {exc}. Retrying in {backoff}s...",
-                    level="WARN",
-                    stderr=True,
-                )
-                time.sleep(backoff)
-            else:
-                log_exception("weather", f"Failed after {max_retries} attempts", exc)
-    return None
-
-
-def fetch_sessions_json() -> Optional[dict]:
-    """Fetch Plex sessions JSON with short retry/backoff."""
-    if not PLEX_TOKEN:
-        log_message("plex", "Missing PLEX_TOKEN", level="ERROR", stderr=True)
-        return None
-    
-    max_retries = 2
-    for attempt in range(max_retries):
-        try:
-            r = requests.get(
-                f"{PLEX_SERVER}/status/sessions",
-                params={"X-Plex-Token": PLEX_TOKEN},
-                headers={"Accept": "application/json"},
-                timeout=HTTP_TIMEOUT,
-            )
-            r.raise_for_status()
-            return r.json()
-        except Exception as exc:
-            if attempt < max_retries - 1:
-                backoff = 2 ** attempt
-                log_message(
-                    "plex",
-                    f"Attempt {attempt + 1}/{max_retries} failed: {exc}. Retrying in {backoff}s...",
-                    level="WARN",
-                    stderr=True,
-                )
-                time.sleep(backoff)
-            else:
-                log_exception("plex", f"Sessions failed after {max_retries} attempts", exc)
-    return None
-
-
-def find_player_track(data: dict) -> Optional[PlexTrack]:
-    """Find the active track entry matching configured PLAYER_NAME."""
-    container = data.get("MediaContainer", {})
-    metadata = container.get("Metadata", [])
-    if isinstance(metadata, dict):
-        metadata = [metadata]
-
-    for item in metadata:
-        player = item.get("Player", {})
-        title = (player.get("title") or player.get("name") or "").strip()
-        if title == PLAYER_NAME:
-            thumb = (
-                item.get("thumb")
-                or item.get("grandparentThumb")
-                or item.get("parentThumb")
-                or item.get("art")
-            )
-            return PlexTrack(
-                title=item.get("title", "Unknown Track"),
-                artist=item.get("grandparentTitle", "Unknown Artist"),
-                album=item.get("parentTitle", "Unknown Album"),
-                thumb_path=thumb,
-                state=normalize_playback_state(item),
-                target_client_identifier=(
-                    player.get("machineIdentifier")
-                    or player.get("clientIdentifier")
-                    or item.get("machineIdentifier")
-                ),
-                player_address=player.get("address"),
-                player_port=int(player.get("port") or 32500),
-            )
-    return None
-
-
-def fetch_plex_cover(thumb_path: str) -> Optional[Image.Image]:
-    """Fetch and scale cover art image for the active track."""
-    if not thumb_path:
-        return None
-
-    max_retries = 2
-    for attempt in range(max_retries):
-        try:
-            direct_url = thumb_path if thumb_path.startswith(("http://", "https://")) else f"{PLEX_SERVER}{thumb_path}"
-            params = None
-            if not thumb_path.startswith(("http://", "https://")):
-                # Local Plex paths usually require token as query parameter.
-                params = {"X-Plex-Token": PLEX_TOKEN}
-
-            r = requests.get(
-                direct_url,
-                params=params,
-                headers={"Accept": "image/*", "X-Plex-Token": PLEX_TOKEN},
-                timeout=HTTP_TIMEOUT,
-            )
-            r.raise_for_status()
-            img = Image.open(io.BytesIO(r.content)).convert("RGB")
-            if img.size != (WIDTH, HEIGHT):
-                img = fit_cover(img, WIDTH, HEIGHT)
-            return img
-        except Exception as exc:
-            if attempt < max_retries - 1:
-                backoff = 2 ** attempt
-                log_message(
-                    "plex",
-                    f"Cover attempt {attempt + 1}/{max_retries} failed: {exc}. Retrying in {backoff}s...",
-                    level="WARN",
-                    stderr=True,
-                )
-                time.sleep(backoff)
-            else:
-                log_exception("plex", f"Cover failed after {max_retries} attempts", exc)
-    return None
-
-
 # Rendering pipeline for idle and now-playing screens
-def render_idle(weather: Optional[WeatherInfo], playback_status: str = "Stopped") -> Image.Image:
+def render_idle(weather: Optional[WeatherInfo], playback_status: Optional[str] = None) -> Image.Image:
     img = Image.new("RGB", (WIDTH, HEIGHT), "black")
     draw = ImageDraw.Draw(img)
     now = datetime.now(ZoneInfo(TIMEZONE))
-    text_center(draw, 26, now.strftime("%H:%M"), FONT_TIME, fill="white")
-    text_center(draw, 86, now.strftime("%a %d %b"), FONT_SMALL, fill="#cfcfcf")
-    text_center(draw, 108, get_location_label(), FONT_SMALL, fill="#9f9f9f")
+    text_center(draw, 14, now.strftime("%H:%M"), FONT_TIME, fill="white")
+    text_center(draw, 74, now.strftime("%a %d %b"), FONT_SMALL, fill="#cfcfcf")
+    text_center(draw, 96, get_location_label(), FONT_SMALL, fill="#9f9f9f")
 
     if weather:
         symbol = get_weather_symbol(weather.weather_code, weather.is_day)
         temp = f"{round(weather.temp_c):.0f}°C"
         label = WEATHER_CODES.get(weather.weather_code, f"Code {weather.weather_code}")
-        text_center(draw, 138, symbol, FONT_WEATHER_ICON, fill="white")
-        text_center(draw, 164, temp, FONT_WEATHER, fill="white")
-        text_center(draw, 194, label, FONT_SMALL, fill="#cfcfcf")
+        text_center(draw, 126, symbol, FONT_WEATHER_ICON, fill="white")
+        text_center(draw, 152, temp, FONT_WEATHER, fill="white")
+        text_center(draw, 182, label, FONT_SMALL, fill="#cfcfcf")
     else:
-        text_center(draw, 164, "Weather unavailable", FONT_SMALL, fill="#888888")
-    text_center(draw, 218, f"Status: {playback_status}", FONT_SMALL, fill="#9f9f9f")
+        text_center(draw, 152, "Weather unavailable", FONT_SMALL, fill="#888888")
+
+    if playback_status:
+        text_center(draw, 204, f"Status: {playback_status}", FONT_SMALL, fill="#9f9f9f")
+
     return draw_button_labels(img, 0, fill="#8f8f8f", is_playing=False)
 
 
@@ -688,7 +427,14 @@ def write_fallback_placeholder(text: str, *, context: str) -> None:
 # Main loop orchestration helpers
 def refresh_weather_if_due(state: LoopState, now_ts: float) -> None:
     if now_ts - state.last_weather_fetch > WEATHER_REFRESH_SECONDS:
-        state.last_weather = fetch_weather()
+        state.last_weather = fetch_weather(
+            latitude=LATITUDE,
+            longitude=LONGITUDE,
+            timezone=TIMEZONE,
+            timeout=HTTP_TIMEOUT,
+            log_warn=lambda msg: log_message("weather", msg, level="WARN", stderr=True),
+            log_error=lambda msg, exc: log_exception("weather", msg, exc),
+        )
         state.last_weather_fetch = now_ts
 
 
@@ -729,7 +475,16 @@ def render_playing_frame(state: LoopState, track: PlexTrack, now_ts: float) -> N
         state.cached_cover = None
 
     if not state.cached_cover and track.thumb_path:
-        state.cached_cover = fetch_plex_cover(track.thumb_path)
+        state.cached_cover = fetch_cover(
+            thumb_path=track.thumb_path,
+            plex_server=PLEX_SERVER,
+            plex_token=PLEX_TOKEN,
+            width=WIDTH,
+            height=HEIGHT,
+            timeout=HTTP_TIMEOUT,
+            log_warn=lambda msg: log_message("plex", msg, level="WARN", stderr=True),
+            log_error=lambda msg: log_message("plex", msg, level="ERROR", stderr=True),
+        )
 
     if state.cached_cover:
         if try_write_framebuffer(render_now_playing(state.cached_cover, track), context="now-playing render"):
@@ -751,8 +506,8 @@ def render_playing_frame(state: LoopState, track: PlexTrack, now_ts: float) -> N
 def render_idle_frame(state: LoopState, track: Optional[PlexTrack]) -> None:
     """Render idle/paused/stopped screen when minute or state changes."""
     minute_key = datetime.now(ZoneInfo(TIMEZONE)).strftime("%Y-%m-%d %H:%M")
-    idle_state = track.state if track else "stopped"
-    status_text = playback_status_text(idle_state)
+    idle_state = track.state if track else "unknown"
+    status_text = playback_status_text(idle_state) if idle_state == "paused" else None
 
     if minute_key == state.last_idle_minute and state.last_player_state == idle_state:
         return
@@ -790,8 +545,14 @@ def main():
             now_ts = time.time()
             refresh_weather_if_due(state, now_ts)
 
-            sessions = fetch_sessions_json()
-            track = find_player_track(sessions) if sessions else None
+            sessions = fetch_sessions_json(
+                plex_server=PLEX_SERVER,
+                plex_token=PLEX_TOKEN,
+                timeout=HTTP_TIMEOUT,
+                log_warn=lambda msg: log_message("plex", msg, level="WARN", stderr=True),
+                log_error=lambda msg: log_message("plex", msg, level="ERROR", stderr=True),
+            )
+            track = find_player_track(sessions, PLAYER_NAME) if sessions else None
             update_current_player_context(track)
 
             if track and track.state == "playing":
