@@ -313,11 +313,17 @@ def find_player_track(data: dict) -> Optional[PlexTrack]:
         player = item.get("Player", {})
         title = (player.get("title") or player.get("name") or "").strip()
         if title == PLAYER_NAME:
+            thumb = (
+                item.get("thumb")
+                or item.get("grandparentThumb")
+                or item.get("parentThumb")
+                or item.get("art")
+            )
             return PlexTrack(
                 title=item.get("title", "Unknown Track"),
                 artist=item.get("grandparentTitle", "Unknown Artist"),
                 album=item.get("parentTitle", "Unknown Album"),
-                thumb_path=item.get("thumb"),
+                thumb_path=thumb,
                 state=player.get("state", "unknown"),
             )
     return None
@@ -330,16 +336,32 @@ def fetch_plex_cover(thumb_path: str) -> Optional[Image.Image]:
     max_retries = 2
     for attempt in range(max_retries):
         try:
+            # First try direct image fetch; many Plex metadata thumbs are directly retrievable.
+            direct_url = thumb_path if thumb_path.startswith(("http://", "https://")) else f"{PLEX_SERVER}{thumb_path}"
+            r = requests.get(
+                direct_url,
+                headers={"X-Plex-Token": PLEX_TOKEN, "Accept": "image/*"},
+                timeout=HTTP_TIMEOUT,
+            )
+            if r.ok and r.content:
+                img = Image.open(io.BytesIO(r.content)).convert("RGB")
+                if img.size != (WIDTH, HEIGHT):
+                    img = fit_cover(img, WIDTH, HEIGHT)
+                return img
+
+            # Fallback to Plex transcode endpoint.
+            transcode_source = thumb_path if thumb_path.startswith(("http://", "https://")) else f"{PLEX_SERVER}{thumb_path}"
             r = requests.get(
                 f"{PLEX_SERVER}/photo/:/transcode",
                 params={
-                    "url": f"{PLEX_SERVER}{thumb_path}",
+                    "url": transcode_source,
                     "width": WIDTH,
                     "height": HEIGHT,
                     "minSize": 1,
                     "upscale": 1,
                     "X-Plex-Token": PLEX_TOKEN,
                 },
+                headers={"Accept": "image/*"},
                 timeout=HTTP_TIMEOUT,
             )
             r.raise_for_status()
