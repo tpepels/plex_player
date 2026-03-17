@@ -1,65 +1,92 @@
 # Plex LCD Display
 
-Show Plex/Plexamp album art on a 320x240 framebuffer display. When nothing is playing, show clock + weather.
+Lightweight Plex/Plexamp now-playing display for Raspberry Pi framebuffer screens.
 
-Works from any current directory. The script always uses files in its own directory.
+## What It Does
 
-## Quick Start
+- While music is playing: shows album art, track title, and artist.
+- While idle: shows clock and weather.
+- If artwork cannot be fetched: shows a "No Album Art" placeholder.
 
-1. Make script executable:
+## Requirements
+
+- Linux device with framebuffer display support (typically Raspberry Pi + `/dev/fb1`).
+- Working LCD/framebuffer driver already installed.
+- Plex server URL and a valid Plex token.
+- Plex player name exactly as reported by active sessions.
+
+## Install (From This Folder)
+
+1. Make the setup script executable:
 
 ```bash
-SCRIPT="/absolute/path/to/setup_plexlcd.sh"
-chmod +x "$SCRIPT"
+chmod +x setup_plexlcd.sh
 ```
 
 2. Install dependencies:
 
 ```bash
-"$SCRIPT" install
+./setup_plexlcd.sh install
 ```
 
-3. Configure environment:
+3. Configure `.env`:
 
 ```bash
-"$SCRIPT" configure
+./setup_plexlcd.sh configure
 ```
 
-4. Test Plex connection and player detection:
+4. Test Plex connectivity and player detection:
 
 ```bash
-"$SCRIPT" test
+./setup_plexlcd.sh test
 ```
 
-5. Install and start service:
+5. Run once manually to verify display output:
 
 ```bash
-"$SCRIPT" service
+python3 plexlcd.py
+```
+
+6. Install/start as a service:
+
+```bash
+./setup_plexlcd.sh service
 systemctl status plexlcd.service
 ```
 
-## Required .env Settings
+## Configuration
 
-Use [.env.example](.env.example) as a template.
+Use [.env.example](.env.example) as template. The app and setup script use `.env` in this same directory.
 
-- PLEX_SERVER: Example http://your-plex-host:32400
-- PLEX_TOKEN: Plex API token
-- PLAYER_NAME: Exact player title from active sessions
-- LATITUDE, LONGITUDE, TIMEZONE: Weather and local time
-- FB_DEVICE: Usually /dev/fb1
-- WIDTH, HEIGHT: Display resolution
+Required keys:
 
-The setup script and service use `.env` from the same directory as `setup_plexlcd.sh`.
+- `PLEX_SERVER` (example: `http://your-plex-host:32400`)
+- `PLEX_TOKEN`
+- `PLAYER_NAME` (must match active Plex player title exactly)
+- `LATITUDE`, `LONGITUDE`, `TIMEZONE`
+- `FB_DEVICE` (usually `/dev/fb1`)
+- `WIDTH`, `HEIGHT`
 
-## Useful Commands
+## Expected Output
 
-```bash
-"$SCRIPT" fb
-"$SCRIPT" help
-python3 "$(dirname "$SCRIPT")/plexlcd.py"
-```
+- `./setup_plexlcd.sh test` should report successful Plex connectivity.
+- During playback, screen should switch to album art view.
+- When playback stops/pauses, screen should return to idle clock/weather.
 
-## Notes
+## Troubleshooting
 
-- Service runs as root to ensure framebuffer write access.
-- If your display is rotated, use LCD-show rotate script (0, 90, 180, 270).
+- `Unauthorized` from `/status/sessions`:
+	- Token is invalid/expired, or server URL is wrong.
+	- Refresh token from Plex Web network requests and update `.env`.
+
+- `No Album Art` while playback is active:
+	- Check `PLAYER_NAME` in `.env` matches the active session exactly.
+	- Re-run `./setup_plexlcd.sh test` during playback.
+
+- `Permission denied` writing framebuffer:
+	- Ensure service is running as configured by setup script.
+	- Confirm `FB_DEVICE` exists and is writable.
+
+- Screen shows nothing:
+	- Verify LCD driver and framebuffer (`./setup_plexlcd.sh fb`).
+	- Test framebuffer with `fbi`.
