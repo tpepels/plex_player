@@ -69,6 +69,7 @@ HEIGHT: int = 240
 POLL_SECONDS: int = 3
 WEATHER_REFRESH_SECONDS: int = 900
 HTTP_TIMEOUT = 10
+COVER_RETRY_SECONDS = 20
 
 FONT_PATH_REGULAR = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 FONT_PATH_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
@@ -332,43 +333,25 @@ def find_player_track(data: dict) -> Optional[PlexTrack]:
 def fetch_plex_cover(thumb_path: str) -> Optional[Image.Image]:
     if not thumb_path:
         return None
-    
+
     max_retries = 2
     for attempt in range(max_retries):
         try:
-            # First try direct image fetch; many Plex metadata thumbs are directly retrievable.
             direct_url = thumb_path if thumb_path.startswith(("http://", "https://")) else f"{PLEX_SERVER}{thumb_path}"
+            params = None
+            if not thumb_path.startswith(("http://", "https://")):
+                # Local Plex paths usually require token as query parameter.
+                params = {"X-Plex-Token": PLEX_TOKEN}
+
             r = requests.get(
                 direct_url,
-                headers={"X-Plex-Token": PLEX_TOKEN, "Accept": "image/*"},
-                timeout=HTTP_TIMEOUT,
-            )
-            if r.ok and r.content:
-                img = Image.open(io.BytesIO(r.content)).convert("RGB")
-                if img.size != (WIDTH, HEIGHT):
-                    img = fit_cover(img, WIDTH, HEIGHT)
-                return img
-
-            # Fallback to Plex transcode endpoint.
-            transcode_source = thumb_path if thumb_path.startswith(("http://", "https://")) else f"{PLEX_SERVER}{thumb_path}"
-            r = requests.get(
-                f"{PLEX_SERVER}/photo/:/transcode",
-                params={
-                    "url": transcode_source,
-                    "width": WIDTH,
-                    "height": HEIGHT,
-                    "minSize": 1,
-                    "upscale": 1,
-                    "X-Plex-Token": PLEX_TOKEN,
-                },
-                headers={"Accept": "image/*"},
+                params=params,
+                headers={"Accept": "image/*", "X-Plex-Token": PLEX_TOKEN},
                 timeout=HTTP_TIMEOUT,
             )
             r.raise_for_status()
             img = Image.open(io.BytesIO(r.content)).convert("RGB")
-            # Validate image dimensions
             if img.size != (WIDTH, HEIGHT):
-                print(f"[plex] Cover has unexpected dimensions {img.size}, resizing...")
                 img = fit_cover(img, WIDTH, HEIGHT)
             return img
         except Exception as exc:
@@ -422,6 +405,7 @@ def main():
     last_player_state = None
     last_idle_minute = None
     cached_cover = None
+    next_cover_retry_ts = 0.0
 
     while True:
         try:
@@ -437,8 +421,15 @@ def main():
 
             # Player is actively playing
             if track and track.state == "playing":
-                # Fetch fresh cover if track changed or state changed
-                if track.thumb_path != last_thumb_path or last_player_state != "playing":
+                # Fetch on track/state change, or retry after cooldown when cover fetch previously failed.
+                needs_refresh = track.thumb_path != last_thumb_path or last_player_state != "playing"
+                needs_retry = (
+                    not cached_cover
+                    and track.thumb_path == last_thumb_path
+                    and now_ts >= next_cover_retry_ts
+                )
+
+                if needs_refresh or needs_retry:
                     cached_cover = None
                     if track.thumb_path:
                         cached_cover = fetch_plex_cover(track.thumb_path)
@@ -448,6 +439,7 @@ def main():
                             write_framebuffer(render_now_playing(cached_cover, track))
                             last_thumb_path = track.thumb_path
                             last_player_state = "playing"
+                            next_cover_retry_ts = 0.0
                         except Exception as e:
                             print(f"[render] Failed to render now-playing: {e}")
                             img = create_error_placeholder("Render Error")
@@ -456,10 +448,12 @@ def main():
                             except Exception as e2:
                                 print(f"[framebuffer] Failed to write error placeholder: {e2}")
                     else:
-                        # No cover available, show placeholder
+                        # No cover available, show placeholder and back off retries.
+                        next_cover_retry_ts = now_ts + COVER_RETRY_SECONDS
                         img = create_error_placeholder("No Album Art")
                         try:
                             write_framebuffer(img)
+                            last_thumb_path = track.thumb_path
                             last_player_state = "playing"
                         except Exception as e:
                             print(f"[framebuffer] Failed to write placeholder: {e}")
@@ -474,6 +468,7 @@ def main():
                         last_player_state = "idle"
                         last_thumb_path = None
                         cached_cover = None
+                        next_cover_retry_ts = 0.0
                     except Exception as e:
                         print(f"[render] Failed to render idle screen: {e}")
                         img = create_error_placeholder("Display Error")
