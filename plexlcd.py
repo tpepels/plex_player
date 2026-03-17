@@ -315,20 +315,17 @@ def text_center(draw: ImageDraw.ImageDraw, y: int, text: str, font, fill="white"
     draw.text((x, y), text, font=font, fill=fill)
 
 
-def draw_button_labels(img: Image.Image, y: int, fill: str = "#d8d8d8") -> Image.Image:
+def draw_button_labels(img: Image.Image, y: int, fill: str = "#d8d8d8", is_playing: bool = False) -> Image.Image:
     if not BUTTONS_ENABLED:
         return img
 
     draw = ImageDraw.Draw(img)
-    labels = ["Play/Pause", "Stop", "Next"]
-    segment_width = WIDTH // len(labels)
+    labels = ["▌▌" if is_playing else "▶", "■", "⏭"]
+    x = 6
+    line_height = 12
 
     for index, label in enumerate(labels):
-        x_center = index * segment_width + segment_width // 2
-        bbox = draw.textbbox((0, 0), label, font=FONT_LABEL)
-        label_width = bbox[2] - bbox[0]
-        x = max(2, x_center - label_width // 2)
-        draw.text((x, y), label, font=FONT_LABEL, fill=fill)
+        draw.text((x, y + index * line_height), label, font=FONT_LABEL, fill=fill)
 
     return img
 
@@ -527,7 +524,7 @@ def render_idle(weather: Optional[WeatherInfo]) -> Image.Image:
         text_center(draw, 182, label, FONT_SMALL, fill="#cfcfcf")
     else:
         text_center(draw, 165, "Weather unavailable", FONT_SMALL, fill="#888888")
-    return draw_button_labels(img, HEIGHT - 16, fill="#8f8f8f")
+    return draw_button_labels(img, HEIGHT - 40, fill="#8f8f8f", is_playing=False)
 
 
 def render_now_playing(cover: Image.Image, track: PlexTrack) -> Image.Image:
@@ -542,7 +539,7 @@ def render_now_playing(cover: Image.Image, track: PlexTrack) -> Image.Image:
     artist = truncate(draw, track.artist, FONT_META, WIDTH - 16)
     draw.text((8, HEIGHT - 74), title, font=FONT_TRACK, fill="white")
     draw.text((8, HEIGHT - 46), artist, font=FONT_META, fill="#dddddd")
-    return draw_button_labels(composed, HEIGHT - 16)
+    return draw_button_labels(composed, HEIGHT - 40, is_playing=True)
 
 
 def main():
