@@ -75,6 +75,9 @@ Optional GPIO button keys:
 - `BUTTON_PLAY_PAUSE_PIN` (default `23`)
 - `BUTTON_STOP_PIN` (default `24`)
 - `BUTTON_NEXT_PIN` (default `25`)
+- `BUTTON_LABEL_PLAY_Y_PERCENT` (default `20`)
+- `BUTTON_LABEL_STOP_Y_PERCENT` (default `40`)
+- `BUTTON_LABEL_NEXT_Y_PERCENT` (default `60`)
 
 ## Expected Output
 

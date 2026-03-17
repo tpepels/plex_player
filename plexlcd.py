@@ -70,6 +70,9 @@ BUTTON_PLAY_PAUSE_PIN_RAW = env("BUTTON_PLAY_PAUSE_PIN", "23")
 BUTTON_STOP_PIN_RAW = env("BUTTON_STOP_PIN", "24")
 BUTTON_NEXT_PIN_RAW = env("BUTTON_NEXT_PIN", "25")
 BUTTON_BOUNCE_TIME_RAW = env("BUTTON_BOUNCE_TIME", "0.15")
+BUTTON_LABEL_PLAY_Y_PERCENT_RAW = env("BUTTON_LABEL_PLAY_Y_PERCENT", "20")
+BUTTON_LABEL_STOP_Y_PERCENT_RAW = env("BUTTON_LABEL_STOP_Y_PERCENT", "40")
+BUTTON_LABEL_NEXT_Y_PERCENT_RAW = env("BUTTON_LABEL_NEXT_Y_PERCENT", "60")
 POLL_SECONDS_RAW = env("POLL_SECONDS", "3")
 WEATHER_REFRESH_SECONDS_RAW = env("WEATHER_REFRESH_SECONDS", "900")
 DISPLAY_X_SHIFT_RAW = env("DISPLAY_X_SHIFT", "0")
@@ -84,6 +87,9 @@ BUTTON_PLAY_PAUSE_PIN: int = 23
 BUTTON_STOP_PIN: int = 24
 BUTTON_NEXT_PIN: int = 25
 BUTTON_BOUNCE_TIME: float = 0.15
+BUTTON_LABEL_PLAY_Y_PERCENT: int = 20
+BUTTON_LABEL_STOP_Y_PERCENT: int = 40
+BUTTON_LABEL_NEXT_Y_PERCENT: int = 60
 POLL_SECONDS: int = 3
 WEATHER_REFRESH_SECONDS: int = 900
 DISPLAY_X_SHIFT: int = 0
@@ -176,7 +182,7 @@ FONT_LABEL = load_font(FONT_PATH_REGULAR, 12)
 
 def validate_startup():
     """Validate configuration at startup. Exit with error if critical settings missing."""
-    global LATITUDE, LONGITUDE, WIDTH, HEIGHT, BUTTONS_ENABLED, BUTTON_PLAY_PAUSE_PIN, BUTTON_STOP_PIN, BUTTON_NEXT_PIN, BUTTON_BOUNCE_TIME, POLL_SECONDS, WEATHER_REFRESH_SECONDS, DISPLAY_X_SHIFT
+    global LATITUDE, LONGITUDE, WIDTH, HEIGHT, BUTTONS_ENABLED, BUTTON_PLAY_PAUSE_PIN, BUTTON_STOP_PIN, BUTTON_NEXT_PIN, BUTTON_BOUNCE_TIME, BUTTON_LABEL_PLAY_Y_PERCENT, BUTTON_LABEL_STOP_Y_PERCENT, BUTTON_LABEL_NEXT_Y_PERCENT, POLL_SECONDS, WEATHER_REFRESH_SECONDS, DISPLAY_X_SHIFT
     errors = []
     
     if not PLEX_TOKEN or PLEX_TOKEN.strip() == "":
@@ -200,6 +206,9 @@ def validate_startup():
         BUTTON_STOP_PIN = int(BUTTON_STOP_PIN_RAW)
         BUTTON_NEXT_PIN = int(BUTTON_NEXT_PIN_RAW)
         BUTTON_BOUNCE_TIME = float(BUTTON_BOUNCE_TIME_RAW)
+        BUTTON_LABEL_PLAY_Y_PERCENT = int(BUTTON_LABEL_PLAY_Y_PERCENT_RAW)
+        BUTTON_LABEL_STOP_Y_PERCENT = int(BUTTON_LABEL_STOP_Y_PERCENT_RAW)
+        BUTTON_LABEL_NEXT_Y_PERCENT = int(BUTTON_LABEL_NEXT_Y_PERCENT_RAW)
         POLL_SECONDS = int(POLL_SECONDS_RAW)
         WEATHER_REFRESH_SECONDS = int(WEATHER_REFRESH_SECONDS_RAW)
         DISPLAY_X_SHIFT = int(DISPLAY_X_SHIFT_RAW)
@@ -218,6 +227,13 @@ def validate_startup():
         errors.append("WEATHER_REFRESH_SECONDS must be >= 60")
     if isinstance(DISPLAY_X_SHIFT, int) and abs(DISPLAY_X_SHIFT) >= max(1, WIDTH):
         errors.append("DISPLAY_X_SHIFT must be smaller than WIDTH")
+    for label_name, label_percent in (
+        ("BUTTON_LABEL_PLAY_Y_PERCENT", BUTTON_LABEL_PLAY_Y_PERCENT),
+        ("BUTTON_LABEL_STOP_Y_PERCENT", BUTTON_LABEL_STOP_Y_PERCENT),
+        ("BUTTON_LABEL_NEXT_Y_PERCENT", BUTTON_LABEL_NEXT_Y_PERCENT),
+    ):
+        if isinstance(label_percent, int) and not 0 <= label_percent <= 100:
+            errors.append(f"{label_name} must be between 0 and 100")
     if BUTTONS_ENABLED and Button is None:
         errors.append("BUTTONS_ENABLED is set but gpiozero is not installed")
 
@@ -322,10 +338,14 @@ def draw_button_labels(img: Image.Image, y: int, fill: str = "#d8d8d8", is_playi
     draw = ImageDraw.Draw(img)
     labels = ["▌▌" if is_playing else "▶", "■", "⏭"]
     x = 6
-    line_height = 12
+    y_positions = [
+        HEIGHT * BUTTON_LABEL_PLAY_Y_PERCENT // 100,
+        HEIGHT * BUTTON_LABEL_STOP_Y_PERCENT // 100,
+        HEIGHT * BUTTON_LABEL_NEXT_Y_PERCENT // 100,
+    ]
 
-    for index, label in enumerate(labels):
-        draw.text((x, y + index * line_height), label, font=FONT_LABEL, fill=fill)
+    for label, label_y in zip(labels, y_positions):
+        draw.text((x, label_y), label, font=FONT_LABEL, fill=fill)
 
     return img
 
@@ -524,7 +544,7 @@ def render_idle(weather: Optional[WeatherInfo]) -> Image.Image:
         text_center(draw, 182, label, FONT_SMALL, fill="#cfcfcf")
     else:
         text_center(draw, 165, "Weather unavailable", FONT_SMALL, fill="#888888")
-    return draw_button_labels(img, HEIGHT - 40, fill="#8f8f8f", is_playing=False)
+    return draw_button_labels(img, 0, fill="#8f8f8f", is_playing=False)
 
 
 def render_now_playing(cover: Image.Image, track: PlexTrack) -> Image.Image:
@@ -539,7 +559,7 @@ def render_now_playing(cover: Image.Image, track: PlexTrack) -> Image.Image:
     artist = truncate(draw, track.artist, FONT_META, WIDTH - 16)
     draw.text((8, HEIGHT - 74), title, font=FONT_TRACK, fill="white")
     draw.text((8, HEIGHT - 46), artist, font=FONT_META, fill="#dddddd")
-    return draw_button_labels(composed, HEIGHT - 40, is_playing=True)
+    return draw_button_labels(composed, 0, is_playing=True)
 
 
 def main():

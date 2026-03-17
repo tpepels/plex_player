@@ -101,7 +101,7 @@ load_env_file() {
 write_env() {
   mkdir -p "$APP_DIR"
 
-  local plex_host player_name plex_token latitude longitude timezone fb_device width height poll_seconds weather_refresh display_x_shift buttons_enabled button_play_pause_pin button_stop_pin button_next_pin
+  local plex_host player_name plex_token latitude longitude timezone fb_device width height poll_seconds weather_refresh display_x_shift buttons_enabled button_play_pause_pin button_stop_pin button_next_pin button_label_play_y_percent button_label_stop_y_percent button_label_next_y_percent
   plex_host=$(prompt_default "Plex server URL" "http://plex.local:32400")
   player_name=$(prompt_default "Exact Plexamp player name" "Plexamp Pi Zero")
   plex_token=$(prompt_secret "Plex token")
@@ -116,6 +116,9 @@ write_env() {
   button_play_pause_pin=$(prompt_default "Play/Pause button GPIO pin" "23")
   button_stop_pin=$(prompt_default "Stop button GPIO pin" "24")
   button_next_pin=$(prompt_default "Next button GPIO pin" "25")
+  button_label_play_y_percent=$(prompt_default "Play/Pause label Y percent" "20")
+  button_label_stop_y_percent=$(prompt_default "Stop label Y percent" "40")
+  button_label_next_y_percent=$(prompt_default "Next label Y percent" "60")
   poll_seconds=$(prompt_default "Plex poll interval seconds" "3")
   weather_refresh=$(prompt_default "Weather refresh seconds" "900")
 
@@ -134,6 +137,9 @@ BUTTONS_ENABLED="$buttons_enabled"
 BUTTON_PLAY_PAUSE_PIN="$button_play_pause_pin"
 BUTTON_STOP_PIN="$button_stop_pin"
 BUTTON_NEXT_PIN="$button_next_pin"
+BUTTON_LABEL_PLAY_Y_PERCENT="$button_label_play_y_percent"
+BUTTON_LABEL_STOP_Y_PERCENT="$button_label_stop_y_percent"
+BUTTON_LABEL_NEXT_Y_PERCENT="$button_label_next_y_percent"
 POLL_SECONDS="$poll_seconds"
 WEATHER_REFRESH_SECONDS="$weather_refresh"
 EOFENV
