@@ -271,24 +271,35 @@ def text_center(draw: ImageDraw.ImageDraw, y: int, text: str, font, fill="white"
     draw.text((x, y), text, font=font, fill=fill)
 
 
-def draw_button_labels(img: Image.Image, y: int, fill: str = "#d8d8d8", is_playing: bool = False) -> Image.Image:
+def draw_button_labels(
+    img: Image.Image,
+    y: int,
+    fill: str = "#d8d8d8",
+    is_playing: bool = False,
+    visible_actions: Optional[tuple[str, ...]] = None,
+) -> Image.Image:
     if not BUTTONS_ENABLED:
         return img
 
-    labels = ["▌▌" if is_playing else "▶", "■", "⏭"]
-    x = 6
-    y_positions = [
-        HEIGHT * BUTTON_LABEL_PLAY_Y_PERCENT // 100,
-        HEIGHT * BUTTON_LABEL_STOP_Y_PERCENT // 100,
-        HEIGHT * BUTTON_LABEL_NEXT_Y_PERCENT // 100,
+    button_items = [
+        ("play_pause", "▌▌" if is_playing else "▶", HEIGHT * BUTTON_LABEL_PLAY_Y_PERCENT // 100),
+        ("stop", "■", HEIGHT * BUTTON_LABEL_STOP_Y_PERCENT // 100),
+        ("next", "⏭", HEIGHT * BUTTON_LABEL_NEXT_Y_PERCENT // 100),
     ]
+    if visible_actions is not None:
+        visible_set = set(visible_actions)
+        button_items = [item for item in button_items if item[0] in visible_set]
+    if not button_items:
+        return img
+
+    x = 6
 
     # Draw semi-transparent circle backgrounds on a composited overlay
     overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
     od = ImageDraw.Draw(overlay)
     tmp = ImageDraw.Draw(img)
     radius = 10
-    for label, label_y in zip(labels, y_positions):
+    for _, label, label_y in button_items:
         bbox = tmp.textbbox((x, label_y), label, font=FONT_LABEL)
         cx = (bbox[0] + bbox[2]) // 2
         cy = (bbox[1] + bbox[3]) // 2
@@ -299,7 +310,7 @@ def draw_button_labels(img: Image.Image, y: int, fill: str = "#d8d8d8", is_playi
     img = base.convert("RGB")
 
     draw = ImageDraw.Draw(img)
-    for label, label_y in zip(labels, y_positions):
+    for _, label, label_y in button_items:
         draw.text((x, label_y), label, font=FONT_LABEL, fill=fill)
 
     return img
@@ -366,7 +377,11 @@ def write_framebuffer(img: Image.Image):
 
 
 # Rendering pipeline for idle and now-playing screens
-def render_idle(weather: Optional[WeatherInfo], playback_status: Optional[str] = None) -> Image.Image:
+def render_idle(
+    weather: Optional[WeatherInfo],
+    playback_status: Optional[str] = None,
+    playback_state: Optional[str] = None,
+) -> Image.Image:
     img = Image.new("RGB", (WIDTH, HEIGHT), "black")
     draw = ImageDraw.Draw(img)
     now = datetime.now(ZoneInfo(TIMEZONE))
@@ -387,7 +402,17 @@ def render_idle(weather: Optional[WeatherInfo], playback_status: Optional[str] =
     if playback_status:
         text_center(draw, 204, f"Status: {playback_status}", FONT_SMALL, fill="#9f9f9f")
 
-    return draw_button_labels(img, 0, fill="#8f8f8f", is_playing=False)
+    idle_actions: tuple[str, ...] = ()
+    if playback_state == "paused":
+        idle_actions = ("play_pause", "stop", "next")
+
+    return draw_button_labels(
+        img,
+        0,
+        fill="#8f8f8f",
+        is_playing=False,
+        visible_actions=idle_actions,
+    )
 
 
 def render_now_playing(cover: Image.Image, track: PlexTrack) -> Image.Image:
@@ -404,7 +429,12 @@ def render_now_playing(cover: Image.Image, track: PlexTrack) -> Image.Image:
     artist = truncate(draw, track.artist, FONT_META, text_max_width)
     draw.text((text_x, HEIGHT - 74), title, font=FONT_TRACK, fill="white")
     draw.text((text_x, HEIGHT - 46), artist, font=FONT_META, fill="#dddddd")
-    return draw_button_labels(composed, 0, is_playing=True)
+    return draw_button_labels(
+        composed,
+        0,
+        is_playing=True,
+        visible_actions=("play_pause", "stop", "next"),
+    )
 
 
 def try_write_framebuffer(img: Image.Image, *, context: str) -> bool:
@@ -512,7 +542,10 @@ def render_idle_frame(state: LoopState, track: Optional[PlexTrack]) -> None:
     if minute_key == state.last_idle_minute and state.last_player_state == idle_state:
         return
 
-    if try_write_framebuffer(render_idle(state.last_weather, playback_status=status_text), context="idle render"):
+    if try_write_framebuffer(
+        render_idle(state.last_weather, playback_status=status_text, playback_state=idle_state),
+        context="idle render",
+    ):
         state.last_idle_minute = minute_key
         state.last_player_state = idle_state
         state.last_thumb_path = None
