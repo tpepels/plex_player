@@ -60,6 +60,44 @@ prompt_secret() {
   printf '%s' "$value"
 }
 
+load_env_file() {
+  local file="$1"
+  local line key value
+
+  if [[ ! -f "$file" ]]; then
+    return 1
+  fi
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    [[ -z "${line//[[:space:]]/}" ]] && continue
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    [[ "$line" != *"="* ]] && continue
+
+    key="${line%%=*}"
+    value="${line#*=}"
+
+    key="${key#"${key%%[![:space:]]*}"}"
+    key="${key%"${key##*[![:space:]]}"}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+
+    if [[ ! "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+      continue
+    fi
+
+    if [[ ${#value} -ge 2 ]]; then
+      if [[ "${value:0:1}" == '"' && "${value: -1}" == '"' ]]; then
+        value="${value:1:${#value}-2}"
+      elif [[ "${value:0:1}" == "'" && "${value: -1}" == "'" ]]; then
+        value="${value:1:${#value}-2}"
+      fi
+    fi
+
+    export "$key=$value"
+  done < "$file"
+}
+
 write_env() {
   mkdir -p "$APP_DIR"
 
@@ -77,17 +115,17 @@ write_env() {
   weather_refresh=$(prompt_default "Weather refresh seconds" "900")
 
   cat > "$ENV_FILE" <<EOFENV
-PLEX_SERVER=$plex_host
-PLEX_TOKEN=$plex_token
-PLAYER_NAME=$player_name
-LATITUDE=$latitude
-LONGITUDE=$longitude
-TIMEZONE=$timezone
-FB_DEVICE=$fb_device
-WIDTH=$width
-HEIGHT=$height
-POLL_SECONDS=$poll_seconds
-WEATHER_REFRESH_SECONDS=$weather_refresh
+PLEX_SERVER="$plex_host"
+PLEX_TOKEN="$plex_token"
+PLAYER_NAME="$player_name"
+LATITUDE="$latitude"
+LONGITUDE="$longitude"
+TIMEZONE="$timezone"
+FB_DEVICE="$fb_device"
+WIDTH="$width"
+HEIGHT="$height"
+POLL_SECONDS="$poll_seconds"
+WEATHER_REFRESH_SECONDS="$weather_refresh"
 EOFENV
 
   chmod 600 "$ENV_FILE"
@@ -100,8 +138,11 @@ test_plex() {
     return 1
   fi
 
-  # shellcheck disable=SC1090
-  source "$ENV_FILE"
+  load_env_file "$ENV_FILE"
+  if [[ -z "${PLEX_SERVER:-}" || -z "${PLEX_TOKEN:-}" ]]; then
+    log "PLEX_SERVER or PLEX_TOKEN missing in $ENV_FILE"
+    return 1
+  fi
   log "Testing Plex connectivity"
 
   local url sessions_tmp err_tmp
