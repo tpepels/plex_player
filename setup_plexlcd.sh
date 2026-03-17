@@ -149,8 +149,11 @@ test_plex() {
   sessions_tmp="$(mktemp /tmp/plex_sessions_test.XXXXXX.json)"
   err_tmp="$(mktemp /tmp/plex_sessions_test.XXXXXX.err)"
 
-  url="$PLEX_SERVER/status/sessions?X-Plex-Token=$PLEX_TOKEN"
-  if ! curl -fsS "$url" >"$sessions_tmp" 2>"$err_tmp"; then
+  url="$PLEX_SERVER/status/sessions"
+  if ! curl -fsS \
+    -H "Accept: application/json" \
+    -H "X-Plex-Token: $PLEX_TOKEN" \
+    "$url" >"$sessions_tmp" 2>"$err_tmp"; then
     printf 'Plex test failed. Error:\n' >&2
     cat "$err_tmp" >&2 || true
     rm -f "$sessions_tmp" "$err_tmp"
@@ -159,6 +162,14 @@ test_plex() {
 
   log "Plex sessions endpoint responded successfully"
   if command -v jq >/dev/null 2>&1; then
+    if ! jq -e . >/dev/null 2>&1 <"$sessions_tmp"; then
+      printf 'Plex responded, but not in JSON format (likely XML).\n'
+      printf 'First response bytes:\n'
+      head -c 200 "$sessions_tmp" | cat
+      printf '\nTip: verify server URL and authentication settings in .env.\n'
+      rm -f "$sessions_tmp" "$err_tmp"
+      return 1
+    fi
     printf 'Players seen in current sessions:\n'
     jq -r '.MediaContainer.Metadata // [] | (if type == "array" then . else [.] end)[] | [.Player.title, .Player.device, .Player.state, .title, .grandparentTitle] | @tsv' "$sessions_tmp" \
       | awk -F '\t' '{printf("- player=%s | device=%s | state=%s | track=%s | artist=%s\n", $1, $2, $3, $4, $5)}' || true
