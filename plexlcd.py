@@ -97,6 +97,8 @@ HTTP_TIMEOUT = 10
 COVER_RETRY_SECONDS = 20
 BUTTON_DEVICES = []
 CURRENT_TARGET_CLIENT_ID: Optional[str] = None
+CURRENT_PLAYER_ADDRESS: Optional[str] = None
+CURRENT_PLAYER_PORT: int = 32500
 COMMAND_COUNTER = 1
 
 FONT_PATH_REGULAR = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
@@ -146,6 +148,8 @@ class PlexTrack:
     thumb_path: Optional[str]
     state: str
     target_client_identifier: Optional[str]
+    player_address: Optional[str] = None
+    player_port: int = 32500
 
 
 def normalize_playback_state(item: dict) -> str:
@@ -259,8 +263,11 @@ def next_command_id() -> int:
 
 def send_plex_playback_command(action: str):
     target_client_id = CURRENT_TARGET_CLIENT_ID
+    player_addr = CURRENT_PLAYER_ADDRESS
+    player_port = CURRENT_PLAYER_PORT
+
     if not target_client_id:
-        print(f"[buttons] Ignoring {action}: no active Plex target client")
+        print(f"[buttons] Ignoring {action}: no active Plex target client", file=sys.stderr, flush=True)
         return
 
     endpoint_map = {
@@ -272,9 +279,16 @@ def send_plex_playback_command(action: str):
     if not endpoint:
         return
 
-    url = f"{PLEX_SERVER}/player/playback/{endpoint}"
+    # Send directly to the Plexamp player, not via the server
+    if player_addr:
+        base_url = f"http://{player_addr}:{player_port}"
+    else:
+        base_url = PLEX_SERVER
+        print(f"[buttons] WARNING: no player address known, falling back to server URL", file=sys.stderr, flush=True)
+
+    url = f"{base_url}/player/playback/{endpoint}"
     cmd_id = next_command_id()
-    print(f"[buttons] POST {url}  target={target_client_id}  commandID={cmd_id}")
+    print(f"[buttons] {action} → GET {url}  commandID={cmd_id}", file=sys.stderr, flush=True)
     try:
         resp = requests.get(
             url,
@@ -282,7 +296,6 @@ def send_plex_playback_command(action: str):
                 "Accept": "application/json",
                 "X-Plex-Token": PLEX_TOKEN,
                 "X-Plex-Client-Identifier": CONTROLLER_CLIENT_ID,
-                "X-Plex-Target-Client-Identifier": target_client_id,
             },
             params={
                 "type": "music",
@@ -290,11 +303,11 @@ def send_plex_playback_command(action: str):
             },
             timeout=HTTP_TIMEOUT,
         )
-        print(f"[buttons] Response {resp.status_code}: {resp.text[:200]!r}")
+        print(f"[buttons] Response {resp.status_code}: {resp.text[:200]!r}", file=sys.stderr, flush=True)
         resp.raise_for_status()
-        print(f"[buttons] Sent {action} to {target_client_id} OK")
+        print(f"[buttons] Sent {action} OK", file=sys.stderr, flush=True)
     except Exception as exc:
-        print(f"[buttons] Failed to send {action}: {exc}")
+        print(f"[buttons] Failed to send {action}: {exc}", file=sys.stderr, flush=True)
 
 
 def setup_gpio_buttons():
@@ -314,7 +327,7 @@ def setup_gpio_buttons():
         button = Button(pin, pull_up=True, bounce_time=BUTTON_BOUNCE_TIME)
         def _make_handler(action_name, pin_no):
             def handler():
-                print(f"[buttons] GPIO pin {pin_no} pressed → action={action_name}  client_id={CURRENT_TARGET_CLIENT_ID!r}")
+                print(f"[buttons] GPIO pin {pin_no} pressed → action={action_name}  client_id={CURRENT_TARGET_CLIENT_ID!r}", file=sys.stderr, flush=True)
                 send_plex_playback_command(action_name)
             return handler
         button.when_pressed = _make_handler(action, pin)
@@ -502,6 +515,8 @@ def find_player_track(data: dict) -> Optional[PlexTrack]:
                     or player.get("clientIdentifier")
                     or item.get("machineIdentifier")
                 ),
+                player_address=player.get("address"),
+                player_port=int(player.get("port") or 32500),
             )
     return None
 
@@ -595,8 +610,10 @@ def main():
 
             sessions = fetch_sessions_json()
             track = find_player_track(sessions) if sessions else None
-            global CURRENT_TARGET_CLIENT_ID
+            global CURRENT_TARGET_CLIENT_ID, CURRENT_PLAYER_ADDRESS, CURRENT_PLAYER_PORT
             CURRENT_TARGET_CLIENT_ID = track.target_client_identifier if track else None
+            CURRENT_PLAYER_ADDRESS = track.player_address if track else None
+            CURRENT_PLAYER_PORT = track.player_port if track else 32500
 
             # Player is actively playing
             if track and track.state == "playing":

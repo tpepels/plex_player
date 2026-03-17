@@ -74,25 +74,23 @@ except Exception as e:
 # ---------------------------------------------------------------------------
 # Plex test helper
 # ---------------------------------------------------------------------------
-def test_plex_command(action: str, target_id: str | None):
-    """Fire a single Plex playback command and print the full response."""
+def test_plex_command(action: str, player_addr: str | None, player_port: int):
+    """Fire a single Plex playback command directly to the player and print the full response."""
     endpoint_map = {"play_pause": "playPause", "stop": "stop", "next": "skipNext"}
     endpoint = endpoint_map.get(action, action)
 
-    if not target_id:
-        print(f"[plex]  No target_client_id known yet – skipping Plex call")
+    if not player_addr:
+        print(f"[plex]  No player address known – skipping Plex call")
         return
 
-    url = f"{PLEX_SERVER}/player/playback/{endpoint}"
+    url = f"http://{player_addr}:{player_port}/player/playback/{endpoint}"
     params = {"type": "music", "commandID": int(time.time())}
     headers = {
         "Accept": "application/json",
         "X-Plex-Token": PLEX_TOKEN,
-        "X-Plex-Target-Client-Identifier": target_id,
     }
     print(f"[plex]  GET {url}")
     print(f"[plex]  params={params}")
-    print(f"[plex]  headers target={target_id}")
     try:
         import requests
         r = requests.get(url, headers=headers, params=params, timeout=10)
@@ -104,7 +102,8 @@ def test_plex_command(action: str, target_id: str | None):
 # ---------------------------------------------------------------------------
 # Fetch current target client id from sessions
 # ---------------------------------------------------------------------------
-def get_target_client_id() -> str | None:
+def get_target_client_id() -> tuple[str | None, str | None, int]:
+    """Returns (machine_identifier, player_address, player_port)."""
     try:
         import requests
         player_name = os.environ.get("PLAYER_NAME", "")
@@ -121,19 +120,21 @@ def get_target_client_id() -> str | None:
             p = item.get("Player", {})
             title = (p.get("title") or p.get("name") or "").strip()
             mid = p.get("machineIdentifier", "")
-            print(f"[plex]  Session player: title={title!r}  machineIdentifier={mid!r}")
+            addr = p.get("address", "")
+            port = int(p.get("port") or 32500)
+            print(f"[plex]  Session player: title={title!r}  machineIdentifier={mid!r}  address={addr!r}  port={port}")
             if title == player_name:
-                print(f"[plex]  Matched! target_client_id={mid!r}")
-                return mid
+                print(f"[plex]  Matched! direct URL will be http://{addr}:{port}")
+                return mid, addr, port
         print(f"[plex]  No session matched PLAYER_NAME={player_name!r}")
     except Exception as exc:
         print(f"[plex]  Sessions fetch error: {exc}")
-    return None
+    return None, None, 32500
 
 
 print()
 print("[plex] Fetching current session to get target client id …")
-target_id = get_target_client_id()
+target_id, player_addr, player_port = get_target_client_id()
 
 # ---------------------------------------------------------------------------
 # Set up buttons
@@ -146,12 +147,7 @@ for pin, action in PINS.items():
         btn = Button(pin, pull_up=True, bounce_time=BOUNCE)
         def _handler(a=action, p=pin):
             print(f"\n*** GPIO PIN {p} PRESSED  action={a} ***")
-            test_plex_command(a, target_id)
-        btn.when_pressed = _handler
-        buttons.append(btn)
-        print(f"[gpio] Pin {pin} → {action}  OK")
-    except Exception as e:
-        print(f"[gpio] Pin {pin} FAILED: {e}")
+                test_plex_command(a, player_addr, player_port)
 
 print()
 print("Ready. Press a physical button (Ctrl+C to quit) …")
