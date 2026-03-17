@@ -28,7 +28,7 @@ install_packages() {
   log "Installing packages"
   $SUDO apt-get update
   $SUDO apt-get install -y \
-    python3 python3-pip python3-venv python3-requests python3-pil \
+    python3 python3-pip python3-venv python3-requests python3-pil python3-gpiozero \
     curl jq fonts-dejavu-core fbset fbi
 }
 
@@ -101,7 +101,7 @@ load_env_file() {
 write_env() {
   mkdir -p "$APP_DIR"
 
-  local plex_host player_name plex_token latitude longitude timezone fb_device width height poll_seconds weather_refresh display_x_shift
+  local plex_host player_name plex_token latitude longitude timezone fb_device width height poll_seconds weather_refresh display_x_shift buttons_enabled button_play_pause_pin button_stop_pin button_next_pin
   plex_host=$(prompt_default "Plex server URL" "http://plex.local:32400")
   player_name=$(prompt_default "Exact Plexamp player name" "Plexamp Pi Zero")
   plex_token=$(prompt_secret "Plex token")
@@ -112,6 +112,10 @@ write_env() {
   width=$(prompt_default "Display width" "320")
   height=$(prompt_default "Display height" "240")
   display_x_shift=$(prompt_default "Display X shift (pixels, negative/positive)" "0")
+  buttons_enabled=$(prompt_default "Enable GPIO buttons (0/1)" "1")
+  button_play_pause_pin=$(prompt_default "Play/Pause button GPIO pin" "23")
+  button_stop_pin=$(prompt_default "Stop button GPIO pin" "24")
+  button_next_pin=$(prompt_default "Next button GPIO pin" "25")
   poll_seconds=$(prompt_default "Plex poll interval seconds" "3")
   weather_refresh=$(prompt_default "Weather refresh seconds" "900")
 
@@ -126,6 +130,10 @@ FB_DEVICE="$fb_device"
 WIDTH="$width"
 HEIGHT="$height"
 DISPLAY_X_SHIFT="$display_x_shift"
+BUTTONS_ENABLED="$buttons_enabled"
+BUTTON_PLAY_PAUSE_PIN="$button_play_pause_pin"
+BUTTON_STOP_PIN="$button_stop_pin"
+BUTTON_NEXT_PIN="$button_next_pin"
 POLL_SECONDS="$poll_seconds"
 WEATHER_REFRESH_SECONDS="$weather_refresh"
 EOFENV

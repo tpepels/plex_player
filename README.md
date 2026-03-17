@@ -7,6 +7,7 @@ Lightweight Plex/Plexamp now-playing display for Raspberry Pi framebuffer screen
 - While music is playing: shows album art, track title, and artist.
 - While idle: shows clock and weather.
 - If artwork cannot be fetched: shows a "No Album Art" placeholder.
+- Optional GPIO buttons can control Plexamp: play/pause, stop, next.
 
 ## Requirements
 
@@ -66,6 +67,13 @@ Required keys:
 - `LATITUDE`, `LONGITUDE`, `TIMEZONE`
 - `FB_DEVICE` (usually `/dev/fb1`)
 - `WIDTH`, `HEIGHT`
+
+Optional GPIO button keys:
+
+- `BUTTONS_ENABLED`
+- `BUTTON_PLAY_PAUSE_PIN` (default `23`)
+- `BUTTON_STOP_PIN` (default `24`)
+- `BUTTON_NEXT_PIN` (default `25`)
 
 ## Expected Output
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import io
 import os
+import socket
 import sys
 import time
 from dataclasses import dataclass
@@ -10,6 +11,11 @@ from typing import Optional
 import requests
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 from zoneinfo import ZoneInfo
+
+try:
+    from gpiozero import Button
+except Exception:
+    Button = None
 
 
 def load_dotenv() -> None:
@@ -59,19 +65,33 @@ TIMEZONE = env("TIMEZONE", "UTC")
 FB_DEVICE = env("FB_DEVICE", "/dev/fb1")
 WIDTH_RAW = env("WIDTH", "320")
 HEIGHT_RAW = env("HEIGHT", "240")
+BUTTONS_ENABLED_RAW = env("BUTTONS_ENABLED", "0")
+BUTTON_PLAY_PAUSE_PIN_RAW = env("BUTTON_PLAY_PAUSE_PIN", "23")
+BUTTON_STOP_PIN_RAW = env("BUTTON_STOP_PIN", "24")
+BUTTON_NEXT_PIN_RAW = env("BUTTON_NEXT_PIN", "25")
+BUTTON_BOUNCE_TIME_RAW = env("BUTTON_BOUNCE_TIME", "0.15")
 POLL_SECONDS_RAW = env("POLL_SECONDS", "3")
 WEATHER_REFRESH_SECONDS_RAW = env("WEATHER_REFRESH_SECONDS", "900")
 DISPLAY_X_SHIFT_RAW = env("DISPLAY_X_SHIFT", "0")
+CONTROLLER_CLIENT_ID = env("CONTROLLER_CLIENT_ID", f"plexlcd-{socket.gethostname()}")
 
 LATITUDE: float = 0.0
 LONGITUDE: float = 0.0
 WIDTH: int = 320
 HEIGHT: int = 240
+BUTTONS_ENABLED: bool = False
+BUTTON_PLAY_PAUSE_PIN: int = 23
+BUTTON_STOP_PIN: int = 24
+BUTTON_NEXT_PIN: int = 25
+BUTTON_BOUNCE_TIME: float = 0.15
 POLL_SECONDS: int = 3
 WEATHER_REFRESH_SECONDS: int = 900
 DISPLAY_X_SHIFT: int = 0
 HTTP_TIMEOUT = 10
 COVER_RETRY_SECONDS = 20
+BUTTON_DEVICES = []
+CURRENT_TARGET_CLIENT_ID: Optional[str] = None
+COMMAND_COUNTER = 1
 
 FONT_PATH_REGULAR = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 FONT_PATH_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
@@ -119,6 +139,7 @@ class PlexTrack:
     album: str
     thumb_path: Optional[str]
     state: str
+    target_client_identifier: Optional[str]
 
 
 def normalize_playback_state(item: dict) -> str:
@@ -154,7 +175,7 @@ FONT_META = load_font(FONT_PATH_REGULAR, 18)
 
 def validate_startup():
     """Validate configuration at startup. Exit with error if critical settings missing."""
-    global LATITUDE, LONGITUDE, WIDTH, HEIGHT, POLL_SECONDS, WEATHER_REFRESH_SECONDS, DISPLAY_X_SHIFT
+    global LATITUDE, LONGITUDE, WIDTH, HEIGHT, BUTTONS_ENABLED, BUTTON_PLAY_PAUSE_PIN, BUTTON_STOP_PIN, BUTTON_NEXT_PIN, BUTTON_BOUNCE_TIME, POLL_SECONDS, WEATHER_REFRESH_SECONDS, DISPLAY_X_SHIFT
     errors = []
     
     if not PLEX_TOKEN or PLEX_TOKEN.strip() == "":
@@ -174,11 +195,17 @@ def validate_startup():
     try:
         WIDTH = int(WIDTH_RAW)
         HEIGHT = int(HEIGHT_RAW)
+        BUTTON_PLAY_PAUSE_PIN = int(BUTTON_PLAY_PAUSE_PIN_RAW)
+        BUTTON_STOP_PIN = int(BUTTON_STOP_PIN_RAW)
+        BUTTON_NEXT_PIN = int(BUTTON_NEXT_PIN_RAW)
+        BUTTON_BOUNCE_TIME = float(BUTTON_BOUNCE_TIME_RAW)
         POLL_SECONDS = int(POLL_SECONDS_RAW)
         WEATHER_REFRESH_SECONDS = int(WEATHER_REFRESH_SECONDS_RAW)
         DISPLAY_X_SHIFT = int(DISPLAY_X_SHIFT_RAW)
     except (TypeError, ValueError):
-        errors.append("WIDTH/HEIGHT/POLL_SECONDS/WEATHER_REFRESH_SECONDS/DISPLAY_X_SHIFT must be valid integers")
+        errors.append("Display/button timing settings must be valid numbers")
+
+    BUTTONS_ENABLED = BUTTONS_ENABLED_RAW.strip().lower() in {"1", "true", "yes", "on"}
 
     if isinstance(WIDTH, int) and WIDTH <= 0:
         errors.append("WIDTH must be > 0")
@@ -190,6 +217,8 @@ def validate_startup():
         errors.append("WEATHER_REFRESH_SECONDS must be >= 60")
     if isinstance(DISPLAY_X_SHIFT, int) and abs(DISPLAY_X_SHIFT) >= max(1, WIDTH):
         errors.append("DISPLAY_X_SHIFT must be smaller than WIDTH")
+    if BUTTONS_ENABLED and Button is None:
+        errors.append("BUTTONS_ENABLED is set but gpiozero is not installed")
 
     try:
         ZoneInfo(TIMEZONE)
@@ -203,6 +232,71 @@ def validate_startup():
         sys.exit(1)
     
     print("[startup] Configuration validated successfully")
+
+
+def next_command_id() -> int:
+    global COMMAND_COUNTER
+    COMMAND_COUNTER += 1
+    return COMMAND_COUNTER
+
+
+def send_plex_playback_command(action: str):
+    target_client_id = CURRENT_TARGET_CLIENT_ID
+    if not target_client_id:
+        print(f"[buttons] Ignoring {action}: no active Plex target client")
+        return
+
+    endpoint_map = {
+        "play_pause": "playPause",
+        "stop": "stop",
+        "next": "skipNext",
+    }
+    endpoint = endpoint_map.get(action)
+    if not endpoint:
+        return
+
+    try:
+        requests.get(
+            f"{PLEX_SERVER}/player/playback/{endpoint}",
+            headers={
+                "Accept": "application/json",
+                "X-Plex-Token": PLEX_TOKEN,
+                "X-Plex-Client-Identifier": CONTROLLER_CLIENT_ID,
+                "X-Plex-Target-Client-Identifier": target_client_id,
+            },
+            params={
+                "type": "music",
+                "commandID": next_command_id(),
+            },
+            timeout=HTTP_TIMEOUT,
+        ).raise_for_status()
+        print(f"[buttons] Sent {action} to {target_client_id}")
+    except Exception as exc:
+        print(f"[buttons] Failed to send {action}: {exc}")
+
+
+def setup_gpio_buttons():
+    global BUTTON_DEVICES
+    if not BUTTONS_ENABLED:
+        return
+    if Button is None:
+        return
+
+    buttons = [
+        ("play_pause", BUTTON_PLAY_PAUSE_PIN),
+        ("stop", BUTTON_STOP_PIN),
+        ("next", BUTTON_NEXT_PIN),
+    ]
+
+    for action, pin in buttons:
+        button = Button(pin, pull_up=True, bounce_time=BUTTON_BOUNCE_TIME)
+        button.when_pressed = lambda _button=None, action_name=action: send_plex_playback_command(action_name)
+        BUTTON_DEVICES.append(button)
+
+    print(
+        "[buttons] Enabled GPIO buttons: "
+        f"play/pause={BUTTON_PLAY_PAUSE_PIN}, stop={BUTTON_STOP_PIN}, next={BUTTON_NEXT_PIN}"
+    )
 
 
 def create_error_placeholder(text: str = "Display Error") -> Image.Image:
@@ -357,6 +451,11 @@ def find_player_track(data: dict) -> Optional[PlexTrack]:
                 album=item.get("parentTitle", "Unknown Album"),
                 thumb_path=thumb,
                 state=normalize_playback_state(item),
+                target_client_identifier=(
+                    player.get("machineIdentifier")
+                    or player.get("clientIdentifier")
+                    or item.get("machineIdentifier")
+                ),
             )
     return None
 
@@ -429,6 +528,7 @@ def render_now_playing(cover: Image.Image, track: PlexTrack) -> Image.Image:
 
 def main():
     validate_startup()
+    setup_gpio_buttons()
     
     last_weather = None
     last_weather_fetch = 0.0
@@ -449,6 +549,8 @@ def main():
 
             sessions = fetch_sessions_json()
             track = find_player_track(sessions) if sessions else None
+            global CURRENT_TARGET_CLIENT_ID
+            CURRENT_TARGET_CLIENT_ID = track.target_client_identifier if track else None
 
             # Player is actively playing
             if track and track.state == "playing":
