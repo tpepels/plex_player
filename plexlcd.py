@@ -12,24 +12,58 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 from zoneinfo import ZoneInfo
 
 
+def load_dotenv() -> None:
+    """Load KEY=VALUE pairs from a local .env file into process environment."""
+    env_path = os.environ.get("PLEXLCD_ENV")
+    if env_path:
+        candidates = [env_path]
+    else:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        candidates = [
+            os.path.join(os.getcwd(), ".env"),
+            os.path.join(script_dir, ".env"),
+        ]
+
+    for candidate in candidates:
+        if not os.path.isfile(candidate):
+            continue
+        try:
+            with open(candidate, "r", encoding="utf-8") as f:
+                for raw_line in f:
+                    line = raw_line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    key, value = line.split("=", 1)
+                    key = key.strip()
+                    value = value.strip().strip('"').strip("'")
+                    if key and key not in os.environ:
+                        os.environ[key] = value
+        except Exception as exc:
+            print(f"[startup] Failed to read {candidate}: {exc}", file=sys.stderr)
+        break
+
+
+load_dotenv()
+
+
 def env(name: str, default: str) -> str:
     return os.environ.get(name, default)
 
 
-PLEX_SERVER = env("PLEX_SERVER", "http://192.168.1.200:32400").rstrip("/")
+PLEX_SERVER = env("PLEX_SERVER", "http://plex.local:32400").rstrip("/")
 PLEX_TOKEN = env("PLEX_TOKEN", "")
 PLAYER_NAME = env("PLAYER_NAME", "Plexamp Pi Zero")
-LATITUDE_RAW = env("LATITUDE", "41.1579")
-LONGITUDE_RAW = env("LONGITUDE", "-8.6291")
-TIMEZONE = env("TIMEZONE", "Europe/Lisbon")
+LATITUDE_RAW = env("LATITUDE", "0.0000")
+LONGITUDE_RAW = env("LONGITUDE", "0.0000")
+TIMEZONE = env("TIMEZONE", "UTC")
 FB_DEVICE = env("FB_DEVICE", "/dev/fb1")
 WIDTH_RAW = env("WIDTH", "320")
 HEIGHT_RAW = env("HEIGHT", "240")
 POLL_SECONDS_RAW = env("POLL_SECONDS", "3")
 WEATHER_REFRESH_SECONDS_RAW = env("WEATHER_REFRESH_SECONDS", "900")
 
-LATITUDE: float = 41.1579
-LONGITUDE: float = -8.6291
+LATITUDE: float = 0.0
+LONGITUDE: float = 0.0
 WIDTH: int = 320
 HEIGHT: int = 240
 POLL_SECONDS: int = 3

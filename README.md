@@ -1,211 +1,69 @@
-# Plexamp LCD Setup (Raspberry Pi Zero 2 W + JOY-IT RB-TFT3.2-V3)
-Deze gids beschrijft stap-voor-stap hoe je het 3.2" LCD scherm gebruikt om
-Plexamp album art te tonen, en een klok + weer wanneer er niets speelt. De
-scripts staan al in:
+# Plex LCD Display
 
-- `/home/tom/setup_plexlcd.sh`
-- `/home/tom/plexlcd.py`
----
-# 1. Scripts uitvoerbaar maken
+Show Plex/Plexamp album art on a 320x240 framebuffer display. When nothing is playing, show clock + weather.
 
-```bash
-cd /home/tom
-ls -l setup_plexlcd.sh plexlcd.py
-chmod +x setup_plexlcd.sh plexlcd.py
-```
+Works from any current directory. Use an absolute path to the setup script.
 
----
-# 2. Installeer de driver voor het LCD scherm
+## Quick Start
 
-Het Joy-IT scherm gebruikt de bekende `LCD-show` drivers.
+1. Make script executable:
 
 ```bash
-sudo rm -rf LCD-show
-git clone https://github.com/goodtft/LCD-show.git
-chmod -R 755 LCD-show
-cd LCD-show
-sudo ./LCD32-show
+SCRIPT="/absolute/path/to/setup_plexlcd.sh"
+chmod +x "$SCRIPT"
 ```
 
-De Pi zal nu automatisch herstarten.
-
----
-# 3. Controleer of het scherm werkt
-
-Na de reboot:
+2. Install dependencies and app files:
 
 ```bash
-ls -l /dev/fb*
-fbset -s
+"$SCRIPT" install
 ```
 
-Je zou normaal **`/dev/fb1`** moeten zien.
-
----
-# 4. Test het scherm met een afbeelding
-
-Installeer een simpele framebuffer image viewer.
+3. Configure environment:
 
 ```bash
-sudo apt update
-sudo apt install -y fbi
+"$SCRIPT" configure
 ```
 
-Test:
+4. Test Plex connection and player detection:
 
 ```bash
-sudo fbi -T 1 -d /dev/fb1 -a /usr/share/rpd-wallpaper/road.jpg
+"$SCRIPT" test
 ```
 
-Als het scherm een afbeelding toont werkt de driver correct. Stop met:
-
-```
-Ctrl + C
-```
-
----
-# 5. Plex Token ophalen
-
-Open Plex in je browser: `http://192.168.1.200:32400/web`
-
-### Methode
-
-1. Open developer tools (F12)
-2. Ga naar **Network**
-3. Reload de pagina
-4. Klik een request naar bijvoorbeeld: `/library` of `/status/sessions`
-5. Zoek naar: `X-Plex-Token=xxxxxxxxxxxx`
-6. Kopieer die token
-
----
-# 6. Player name vinden
-
-Start Plexamp op de Pi en laat muziek spelen. Run op de Pi:
+5. Install and start service:
 
 ```bash
-curl "http://192.168.1.200:32400/status/sessions?X-Plex-Token=JOUW_TOKEN"
-```
-
-Zoek in de output naar:
-
-```
-Player: title="Plexamp" device="Raspberry Pi" state="playing"
-```
-
-De waarde van **title** is de player name. Bijvoorbeeld: `Plexamp Pi Zero`
-
----
-# 7. Setup script gebruiken
-
-Ga terug naar je home directory.
-
-```bash
-cd /home/tom
-```
-
-Installeer dependencies:
-
-```bash
-./setup_plexlcd.sh install
-```
-
-Configureer:
-
-```bash
-./setup_plexlcd.sh configure
-```
-
-Je moet invullen:
-
-| Setting | Value |
-|---------|-------|
-| Plex server | `http://192.168.1.200:32400` |
-| Plex token | jouw token |
-| Player name | exacte player title |
-| Latitude | `41.1579` |
-| Longitude | `-8.6291` |
-| Timezone | `Europe/Lisbon` |
-| Framebuffer | `/dev/fb1` |
-| Width | `320` |
-| Height | `240` |
-
----
-# 8. Controleer actieve Plex players
-
-Start een nummer in Plexamp en run:
-
-```bash
-./setup_plexlcd.sh test
-```
-
-Dit toont alle actieve players. Gebruik de **exacte naam** die hier verschijnt.
-
----
-# 9. Controleer framebuffer
-
-```bash
-./setup_plexlcd.sh fb
-```
-
-Output moet ongeveer zijn:
-
-```
-/dev/fb1
-```
-
----
-# 10. Test de Python app handmatig
-
-Laad eerst de configuratie:
-
-```bash
-set -a
-source /home/tom/plexlcd/.env
-set +a
-```
-
-Run daarna:
-
-```bash
-python3 /home/tom/plexlcd/plexlcd.py
-```
-
-Het scherm moet nu:
-- album art tonen tijdens muziek
-- klok + weer tonen wanneer niets speelt
-
----
-# 11. Installeer de service (autostart)
-
-Als alles werkt:
-
-```bash
-./setup_plexlcd.sh service
-```
-
-Controleer:
-
-```bash
+"$SCRIPT" service
 systemctl status plexlcd.service
 ```
 
----
-# 12. Rotatie aanpassen (indien nodig)
+## Required .env Settings
 
-Als het scherm gedraaid staat:
+Use [.env.example](.env.example) as a template.
+
+- PLEX_SERVER: Example http://your-plex-host:32400
+- PLEX_TOKEN: Plex API token
+- PLAYER_NAME: Exact player title from active sessions
+- LATITUDE, LONGITUDE, TIMEZONE: Weather and local time
+- FB_DEVICE: Usually /dev/fb1
+- WIDTH, HEIGHT: Display resolution
+
+The app loads .env automatically from:
+
+1. Path in PLEXLCD_ENV (if set)
+2. Current working directory
+3. Same directory as the Python script
+
+## Useful Commands
 
 ```bash
-cd /home/tom/LCD-show
-sudo ./rotate.sh 90
+"$SCRIPT" fb
+"$SCRIPT" help
+python3 "$HOME/plexlcd/plexlcd.py"
 ```
 
-Opties: `0`, `90`, `180`, `270`
+## Notes
 
----
-# Klaar 🎵
-
-De Pi zal nu automatisch:
-- Plex controleren
-- album art tonen tijdens afspelen
-- klok + weer tonen wanneer idle
-- automatisch starten bij boot
+- Service runs as root to ensure framebuffer write access.
+- If your display is rotated, use LCD-show rotate script (0, 90, 180, 270).

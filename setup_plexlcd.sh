@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="${APP_DIR:-$HOME/plexlcd}"
 ENV_FILE="$APP_DIR/.env"
 SERVICE_FILE="/etc/systemd/system/plexlcd.service"
@@ -20,6 +21,10 @@ require_root_for_apt() {
 
 install_packages() {
   require_root_for_apt
+  if ! command -v apt-get >/dev/null 2>&1; then
+    log "apt-get not found. Install dependencies manually for your distro."
+    return 1
+  fi
   log "Installing packages"
   $SUDO apt-get update
   $SUDO apt-get install -y \
@@ -29,7 +34,10 @@ install_packages() {
 
 copy_python_script() {
   mkdir -p "$APP_DIR"
-  cp "$(dirname "$0")/plexlcd.py" "$APP_DIR/plexlcd.py"
+  cp "$SCRIPT_DIR/plexlcd.py" "$APP_DIR/plexlcd.py"
+  if [[ -f "$SCRIPT_DIR/.env.example" ]]; then
+    cp "$SCRIPT_DIR/.env.example" "$APP_DIR/.env.example"
+  fi
   chmod +x "$APP_DIR/plexlcd.py"
 }
 
@@ -57,12 +65,12 @@ write_env() {
   mkdir -p "$APP_DIR"
 
   local plex_host player_name plex_token latitude longitude timezone fb_device width height poll_seconds weather_refresh
-  plex_host=$(prompt_default "Plex server URL" "http://192.168.1.200:32400")
+  plex_host=$(prompt_default "Plex server URL" "http://plex.local:32400")
   player_name=$(prompt_default "Exact Plexamp player name" "Plexamp Pi Zero")
   plex_token=$(prompt_secret "Plex token")
-  latitude=$(prompt_default "Latitude" "41.1579")
-  longitude=$(prompt_default "Longitude" "-8.6291")
-  timezone=$(prompt_default "Timezone" "Europe/Lisbon")
+  latitude=$(prompt_default "Latitude" "0.0000")
+  longitude=$(prompt_default "Longitude" "0.0000")
+  timezone=$(prompt_default "Timezone" "UTC")
   fb_device=$(prompt_default "Framebuffer device" "/dev/fb1")
   width=$(prompt_default "Display width" "320")
   height=$(prompt_default "Display height" "240")
@@ -97,18 +105,23 @@ test_plex() {
   source "$ENV_FILE"
   log "Testing Plex connectivity"
 
-  local url
+  local url sessions_tmp err_tmp
+  sessions_tmp="$(mktemp /tmp/plex_sessions_test.XXXXXX.json)"
+  err_tmp="$(mktemp /tmp/plex_sessions_test.XXXXXX.err)"
+
   url="$PLEX_SERVER/status/sessions?X-Plex-Token=$PLEX_TOKEN"
-  if ! curl -fsS "$url" >/tmp/plex_sessions_test.json 2>/tmp/plex_sessions_test.err; then
+  if ! curl -fsS "$url" >"$sessions_tmp" 2>"$err_tmp"; then
     printf 'Plex test failed. Error:\n' >&2
-    cat /tmp/plex_sessions_test.err >&2 || true
+    cat "$err_tmp" >&2 || true
+    rm -f "$sessions_tmp" "$err_tmp"
     return 1
   fi
 
   log "Plex sessions endpoint responded successfully"
   printf 'Players seen in current sessions:\n'
-  jq -r '.MediaContainer.Metadata // [] | (if type == "array" then . else [.] end)[] | [.Player.title, .Player.device, .Player.state, .title, .grandparentTitle] | @tsv' /tmp/plex_sessions_test.json \
+  jq -r '.MediaContainer.Metadata // [] | (if type == "array" then . else [.] end)[] | [.Player.title, .Player.device, .Player.state, .title, .grandparentTitle] | @tsv' "$sessions_tmp" \
     | awk -F '\t' '{printf("- player=%s | device=%s | state=%s | track=%s | artist=%s\n", $1, $2, $3, $4, $5)}' || true
+  rm -f "$sessions_tmp" "$err_tmp"
 }
 
 show_framebuffers() {
@@ -125,7 +138,7 @@ show_framebuffers() {
 show_token_help() {
   cat <<'EOHELP'
 How to get your Plex token:
-  1. Open http://192.168.1.200:32400/web in a browser.
+  1. Open http://<PLEX_SERVER_IP>:32400/web in a browser.
   2. Open browser dev tools -> Network.
   3. Reload Plex.
   4. Click a request to /status/sessions, /library, or /metadata.
@@ -146,6 +159,13 @@ install_service() {
     return 1
   fi
 
+  local python_exec
+  python_exec="$(command -v "$PYTHON_BIN" || true)"
+  if [[ -z "$python_exec" ]]; then
+    log "Python executable '$PYTHON_BIN' not found"
+    return 1
+  fi
+
   log "Installing systemd service"
   log "Note: Service will run as root to access framebuffer device"
   cat <<EOFUNIT | $SUDO tee "$SERVICE_FILE" >/dev/null
@@ -159,7 +179,7 @@ Type=simple
 User=root
 WorkingDirectory=$APP_DIR
 EnvironmentFile=$ENV_FILE
-ExecStart=/usr/bin/python3 $APP_DIR/plexlcd.py
+ExecStart=$python_exec $APP_DIR/plexlcd.py
 Restart=always
 RestartSec=5
 
