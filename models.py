@@ -98,7 +98,18 @@ class RuntimeState:
     toast_text: Optional[str] = None
     toast_until_ts: float = 0.0
     force_idle_until_ts: float = 0.0
+    pending_command: Optional["PendingCommand"] = None
     command_counter: int = 1
+
+
+@dataclass
+class PendingCommand:
+    """Local command intent awaiting Plex-state confirmation."""
+
+    action: str
+    command_id: int
+    issued_ts: float
+    deadline_ts: float
 
 
 @dataclass
@@ -110,6 +121,7 @@ class PlaybackSnapshot:
     last_player_state: Optional[str]
     no_track_grace_until_ts: float
     force_idle_until_ts: float
+    pending_command: Optional[PendingCommand]
 
 
 @dataclass
@@ -121,3 +133,4 @@ class TransitionDecision:
     idle_track: Optional[PlexTrack] = None
     set_no_track_grace_until_ts: Optional[float] = None
     clear_force_idle: bool = False
+    clear_pending_command: bool = False

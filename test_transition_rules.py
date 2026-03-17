@@ -24,22 +24,32 @@ class TransitionRulesTests(unittest.TestCase):
         apply_button_rules(
             runtime,
             "stop",
+            command_id=42,
             now_ts=100.0,
             toast_duration_seconds=0.7,
             stop_force_idle_seconds=4.0,
+            confirm_timeout_seconds=5.0,
         )
         self.assertEqual(runtime.toast_text, "Stopped")
         self.assertEqual(runtime.toast_until_ts, 100.7)
         self.assertEqual(runtime.force_idle_until_ts, 104.0)
+        pending = runtime.pending_command
+        self.assertIsNotNone(pending)
+        if pending is None:
+            self.fail("pending_command must be set after stop")
+        self.assertEqual(pending.action, "stop")
+        self.assertEqual(pending.command_id, 42)
 
     def test_button_play_pause_clears_force_idle(self):
         runtime = RuntimeState(current_playback_state="playing", force_idle_until_ts=999.0)
         apply_button_rules(
             runtime,
             "play_pause",
+            command_id=7,
             now_ts=100.0,
             toast_duration_seconds=0.7,
             stop_force_idle_seconds=4.0,
+            confirm_timeout_seconds=5.0,
         )
         self.assertEqual(runtime.toast_text, "Paused")
         self.assertEqual(runtime.force_idle_until_ts, 0.0)
@@ -51,6 +61,7 @@ class TransitionRulesTests(unittest.TestCase):
             last_player_state="playing",
             no_track_grace_until_ts=15.0,
             force_idle_until_ts=20.0,
+            pending_command=None,
         )
         decision = resolve_transition(snapshot, no_track_grace_seconds=4.0)
         self.assertEqual(decision.mode, TransitionMode.IDLE)
@@ -63,6 +74,7 @@ class TransitionRulesTests(unittest.TestCase):
             last_player_state="paused",
             no_track_grace_until_ts=0.0,
             force_idle_until_ts=0.0,
+            pending_command=None,
         )
         decision = resolve_transition(snapshot, no_track_grace_seconds=4.0)
         self.assertEqual(decision.mode, TransitionMode.PLAYING)
@@ -77,10 +89,57 @@ class TransitionRulesTests(unittest.TestCase):
             last_player_state="playing",
             no_track_grace_until_ts=12.0,
             force_idle_until_ts=0.0,
+            pending_command=None,
         )
         decision = resolve_transition(snapshot, no_track_grace_seconds=4.0)
         self.assertEqual(decision.mode, TransitionMode.HOLD)
         self.assertEqual(decision.reason, "transient_no_track_gap")
+
+    def test_pending_stop_confirmed_when_not_playing(self):
+        runtime = RuntimeState(current_playback_state="playing")
+        apply_button_rules(
+            runtime,
+            "stop",
+            command_id=1,
+            now_ts=100.0,
+            toast_duration_seconds=0.7,
+            stop_force_idle_seconds=4.0,
+            confirm_timeout_seconds=5.0,
+        )
+        snapshot = PlaybackSnapshot(
+            now_ts=101.0,
+            track=self._track(state="paused"),
+            last_player_state="playing",
+            no_track_grace_until_ts=0.0,
+            force_idle_until_ts=0.0,
+            pending_command=runtime.pending_command,
+        )
+        decision = resolve_transition(snapshot, no_track_grace_seconds=4.0)
+        self.assertEqual(decision.mode, TransitionMode.IDLE)
+        self.assertEqual(decision.reason, "pending_stop_confirmed")
+        self.assertTrue(decision.clear_pending_command)
+
+    def test_pending_timeout_clears_command(self):
+        runtime = RuntimeState(current_playback_state="playing")
+        apply_button_rules(
+            runtime,
+            "next",
+            command_id=2,
+            now_ts=100.0,
+            toast_duration_seconds=0.7,
+            stop_force_idle_seconds=4.0,
+            confirm_timeout_seconds=1.0,
+        )
+        snapshot = PlaybackSnapshot(
+            now_ts=102.0,
+            track=None,
+            last_player_state="idle",
+            no_track_grace_until_ts=0.0,
+            force_idle_until_ts=0.0,
+            pending_command=runtime.pending_command,
+        )
+        decision = resolve_transition(snapshot, no_track_grace_seconds=4.0)
+        self.assertTrue(decision.clear_pending_command)
 
     def test_elapsed_interpolation_and_clamp(self):
         state = LoopState()

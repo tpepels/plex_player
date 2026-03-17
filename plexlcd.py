@@ -104,6 +104,7 @@ HTTP_TIMEOUT = 10
 COVER_RETRY_SECONDS = 20
 TOAST_DURATION_SECONDS = 0.7
 NO_TRACK_GRACE_SECONDS = 4.0
+COMMAND_CONFIRM_SECONDS = 5.0
 BUTTON_DEVICES = []
 RUNTIME_STATE = RuntimeState()
 REFRESH_EVENT = threading.Event()
@@ -285,9 +286,11 @@ def send_plex_playback_command(action: str):
         apply_button_rules(
             RUNTIME_STATE,
             action,
+            command_id=cmd_id,
             now_ts=time.monotonic(),
             toast_duration_seconds=TOAST_DURATION_SECONDS,
             stop_force_idle_seconds=max(2.0, NO_TRACK_GRACE_SECONDS),
+            confirm_timeout_seconds=COMMAND_CONFIRM_SECONDS,
         )
         REFRESH_EVENT.set()
 
@@ -754,11 +757,14 @@ def main():
                 last_player_state=state.last_player_state,
                 no_track_grace_until_ts=state.no_track_grace_until_ts,
                 force_idle_until_ts=RUNTIME_STATE.force_idle_until_ts,
+                pending_command=RUNTIME_STATE.pending_command,
             )
             decision = resolve_transition(snapshot, no_track_grace_seconds=NO_TRACK_GRACE_SECONDS)
 
             if decision.clear_force_idle:
                 RUNTIME_STATE.force_idle_until_ts = 0.0
+            if decision.clear_pending_command:
+                RUNTIME_STATE.pending_command = None
             if decision.set_no_track_grace_until_ts is not None:
                 state.no_track_grace_until_ts = decision.set_no_track_grace_until_ts
 

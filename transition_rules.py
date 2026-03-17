@@ -5,7 +5,7 @@ This module contains policy decisions only; rendering and I/O stay elsewhere.
 
 from typing import Optional
 
-from models import LoopState, PlaybackSnapshot, PlexTrack, RuntimeState, TransitionDecision, TransitionMode
+from models import LoopState, PendingCommand, PlaybackSnapshot, PlexTrack, RuntimeState, TransitionDecision, TransitionMode
 
 
 def _normalized_state(track: Optional[PlexTrack]) -> str:
@@ -35,14 +35,17 @@ def apply_button_rules(
     runtime_state: RuntimeState,
     action: str,
     *,
+    command_id: int,
     now_ts: float,
     toast_duration_seconds: float,
     stop_force_idle_seconds: float,
+    confirm_timeout_seconds: float,
 ) -> None:
     """Apply local button-intent rules to runtime state."""
 
     toast_duration_seconds = max(0.0, float(toast_duration_seconds))
     stop_force_idle_seconds = max(0.0, float(stop_force_idle_seconds))
+    confirm_timeout_seconds = max(0.5, float(confirm_timeout_seconds))
 
     if action == "next":
         runtime_state.toast_text = "Skipped"
@@ -57,6 +60,12 @@ def apply_button_rules(
         runtime_state.toast_text = "Command sent"
 
     runtime_state.toast_until_ts = now_ts + toast_duration_seconds
+    runtime_state.pending_command = PendingCommand(
+        action=action,
+        command_id=int(command_id),
+        issued_ts=now_ts,
+        deadline_ts=now_ts + confirm_timeout_seconds,
+    )
 
 
 def resolve_transition(snapshot: PlaybackSnapshot, *, no_track_grace_seconds: float) -> TransitionDecision:
@@ -64,9 +73,30 @@ def resolve_transition(snapshot: PlaybackSnapshot, *, no_track_grace_seconds: fl
 
     no_track_grace_seconds = max(0.0, float(no_track_grace_seconds))
     track_state = _normalized_state(snapshot.track)
+    clear_pending = False
+
+    pending = snapshot.pending_command
+    if pending and snapshot.now_ts >= pending.deadline_ts:
+        clear_pending = True
+        pending = None
+
+    # Two-phase confirmation for STOP: once Plex is no longer playing, clear pending.
+    if pending and pending.action == "stop" and track_state != "playing":
+        return TransitionDecision(
+            mode=TransitionMode.IDLE,
+            reason="pending_stop_confirmed",
+            idle_track=snapshot.track,
+            clear_force_idle=True,
+            clear_pending_command=True,
+        )
 
     if snapshot.now_ts < snapshot.force_idle_until_ts:
-        return TransitionDecision(mode=TransitionMode.IDLE, reason="force_idle_window", idle_track=None)
+        return TransitionDecision(
+            mode=TransitionMode.IDLE,
+            reason="force_idle_window",
+            idle_track=None,
+            clear_pending_command=clear_pending,
+        )
 
     if snapshot.track and track_state == "playing":
         return TransitionDecision(
@@ -74,6 +104,7 @@ def resolve_transition(snapshot: PlaybackSnapshot, *, no_track_grace_seconds: fl
             reason="plex_playing",
             set_no_track_grace_until_ts=snapshot.now_ts + no_track_grace_seconds,
             clear_force_idle=True,
+            clear_pending_command=clear_pending,
         )
 
     if (
@@ -81,9 +112,18 @@ def resolve_transition(snapshot: PlaybackSnapshot, *, no_track_grace_seconds: fl
         and str(snapshot.last_player_state or "").strip().lower() == "playing"
         and snapshot.now_ts < snapshot.no_track_grace_until_ts
     ):
-        return TransitionDecision(mode=TransitionMode.HOLD, reason="transient_no_track_gap")
+        return TransitionDecision(
+            mode=TransitionMode.HOLD,
+            reason="transient_no_track_gap",
+            clear_pending_command=clear_pending,
+        )
 
-    return TransitionDecision(mode=TransitionMode.IDLE, reason="default_idle", idle_track=snapshot.track)
+    return TransitionDecision(
+        mode=TransitionMode.IDLE,
+        reason="default_idle",
+        idle_track=snapshot.track,
+        clear_pending_command=clear_pending,
+    )
 
 
 def compute_display_elapsed_ms(state: LoopState, track: PlexTrack, now_ts: float) -> Optional[int]:
