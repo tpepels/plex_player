@@ -158,9 +158,14 @@ test_plex() {
   fi
 
   log "Plex sessions endpoint responded successfully"
-  printf 'Players seen in current sessions:\n'
-  jq -r '.MediaContainer.Metadata // [] | (if type == "array" then . else [.] end)[] | [.Player.title, .Player.device, .Player.state, .title, .grandparentTitle] | @tsv' "$sessions_tmp" \
-    | awk -F '\t' '{printf("- player=%s | device=%s | state=%s | track=%s | artist=%s\n", $1, $2, $3, $4, $5)}' || true
+  if command -v jq >/dev/null 2>&1; then
+    printf 'Players seen in current sessions:\n'
+    jq -r '.MediaContainer.Metadata // [] | (if type == "array" then . else [.] end)[] | [.Player.title, .Player.device, .Player.state, .title, .grandparentTitle] | @tsv' "$sessions_tmp" \
+      | awk -F '\t' '{printf("- player=%s | device=%s | state=%s | track=%s | artist=%s\n", $1, $2, $3, $4, $5)}' || true
+  else
+    printf 'Plex sessions response received (jq not installed, cannot parse player list).\n'
+    printf 'Install jq or run: %s install\n' "$(basename "$0")"
+  fi
   rm -f "$sessions_tmp" "$err_tmp"
 }
 
