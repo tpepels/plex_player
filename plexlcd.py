@@ -272,9 +272,12 @@ def send_plex_playback_command(action: str):
     if not endpoint:
         return
 
+    url = f"{PLEX_SERVER}/player/playback/{endpoint}"
+    cmd_id = next_command_id()
+    print(f"[buttons] POST {url}  target={target_client_id}  commandID={cmd_id}")
     try:
-        requests.get(
-            f"{PLEX_SERVER}/player/playback/{endpoint}",
+        resp = requests.get(
+            url,
             headers={
                 "Accept": "application/json",
                 "X-Plex-Token": PLEX_TOKEN,
@@ -283,11 +286,13 @@ def send_plex_playback_command(action: str):
             },
             params={
                 "type": "music",
-                "commandID": next_command_id(),
+                "commandID": cmd_id,
             },
             timeout=HTTP_TIMEOUT,
-        ).raise_for_status()
-        print(f"[buttons] Sent {action} to {target_client_id}")
+        )
+        print(f"[buttons] Response {resp.status_code}: {resp.text[:200]!r}")
+        resp.raise_for_status()
+        print(f"[buttons] Sent {action} to {target_client_id} OK")
     except Exception as exc:
         print(f"[buttons] Failed to send {action}: {exc}")
 
@@ -307,7 +312,12 @@ def setup_gpio_buttons():
 
     for action, pin in buttons:
         button = Button(pin, pull_up=True, bounce_time=BUTTON_BOUNCE_TIME)
-        button.when_pressed = lambda _button=None, action_name=action: send_plex_playback_command(action_name)
+        def _make_handler(action_name, pin_no):
+            def handler():
+                print(f"[buttons] GPIO pin {pin_no} pressed → action={action_name}  client_id={CURRENT_TARGET_CLIENT_ID!r}")
+                send_plex_playback_command(action_name)
+            return handler
+        button.when_pressed = _make_handler(action, pin)
         BUTTON_DEVICES.append(button)
 
     print(
