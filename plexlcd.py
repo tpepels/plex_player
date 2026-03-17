@@ -102,6 +102,7 @@ DEBUG_LOGGING = env("DEBUG_LOGGING", "0").strip().lower() in {"1", "true", "yes"
 HTTP_TIMEOUT = 10
 COVER_RETRY_SECONDS = 20
 TOAST_DURATION_SECONDS = 0.7
+NO_TRACK_GRACE_SECONDS = 4.0
 BUTTON_DEVICES = []
 RUNTIME_STATE = RuntimeState()
 REFRESH_EVENT = threading.Event()
@@ -474,14 +475,17 @@ def render_idle(
         if weather.next_hour_weather_code is not None and weather.next_hour_temp_c is not None:
             next_symbol = get_weather_symbol(weather.next_hour_weather_code, weather.is_day)
             next_temp_text = f"{round(weather.next_hour_temp_c):.0f}C"
+            next_prefix = "Next hr:"
+            prefix_w = int(draw.textlength(next_prefix, font=FONT_PROGRESS))
             icon_w = int(draw.textlength(next_symbol, font=FONT_WEATHER_ICON))
             temp_w = int(draw.textlength(next_temp_text, font=FONT_SMALL))
             gap = 6
-            row_w = icon_w + gap + temp_w
+            row_w = prefix_w + gap + icon_w + gap + temp_w
             row_x = max(0, (WIDTH - row_w) // 2)
             row_y = 194
-            draw.text((row_x, row_y), next_symbol, font=FONT_WEATHER_ICON, fill="#b8b8b8")
-            draw.text((row_x + icon_w + gap, row_y + 2), next_temp_text, font=FONT_SMALL, fill="#b8b8b8")
+            draw.text((row_x, row_y + 2), next_prefix, font=FONT_PROGRESS, fill="#b8b8b8")
+            draw.text((row_x + prefix_w + gap, row_y), next_symbol, font=FONT_WEATHER_ICON, fill="#b8b8b8")
+            draw.text((row_x + prefix_w + gap + icon_w + gap, row_y + 2), next_temp_text, font=FONT_SMALL, fill="#b8b8b8")
     else:
         text_center(draw, 152, "Weather unavailable", FONT_SMALL, fill="#888888")
 
@@ -725,7 +729,12 @@ def main():
             update_current_player_context(track)
 
             if track and track.state == "playing":
+                # Keep a short grace window for transient session gaps during skips.
+                state.no_track_grace_until_ts = now_ts + NO_TRACK_GRACE_SECONDS
                 render_playing_frame(state, track, now_ts)
+            elif not track and state.last_player_state == "playing" and now_ts < state.no_track_grace_until_ts:
+                # Preserve current now-playing frame while Plex transitions between tracks.
+                pass
             else:
                 render_idle_frame(state, track)
 

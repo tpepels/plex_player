@@ -66,6 +66,7 @@ class LoopState:
     last_toast_visible: Optional[bool] = None
     cached_cover: Optional[Image.Image] = None
     next_cover_retry_ts: float = 0.0
+    no_track_grace_until_ts: float = 0.0
 
 
 @dataclass
