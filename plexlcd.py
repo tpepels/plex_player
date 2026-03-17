@@ -176,6 +176,7 @@ FONT_TRACK = load_font(FONT_PATH_BOLD, 18)
 FONT_META = load_font(FONT_PATH_REGULAR, 18)
 FONT_LABEL = load_font(FONT_PATH_SYMBOLS, 12)
 FONT_WEATHER_ICON = load_font(FONT_PATH_SYMBOLS, 22)
+FONT_PROGRESS = load_font(FONT_PATH_REGULAR, 12)
 
 
 def format_ms(ms: Optional[int]) -> str:
@@ -522,12 +523,12 @@ def render_now_playing(cover: Image.Image, track: PlexTrack) -> Image.Image:
         fill_w = int((elapsed / track.duration_ms) * bar_w)
         draw.rectangle((bar_x, bar_y, bar_x + bar_w, bar_y + bar_h), fill="#4a4a4a")
         draw.rectangle((bar_x, bar_y, bar_x + fill_w, bar_y + bar_h), fill="#f2f2f2")
-        draw.text(
-            (bar_x, bar_y - 12),
-            f"{format_ms(elapsed)} / {format_ms(track.duration_ms)}",
-            font=FONT_LABEL,
-            fill="#d6d6d6",
-        )
+        elapsed_text = format_ms(elapsed)
+        total_text = format_ms(track.duration_ms)
+        time_y = bar_y - 14
+        draw.text((bar_x, time_y), elapsed_text, font=FONT_PROGRESS, fill="#d6d6d6")
+        total_w = int(draw.textlength(total_text, font=FONT_PROGRESS))
+        draw.text((bar_x + bar_w - total_w, time_y), total_text, font=FONT_PROGRESS, fill="#d6d6d6")
 
     img = draw_button_labels(
         composed,

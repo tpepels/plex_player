@@ -88,6 +88,24 @@ Other useful optional keys:
 - `DEBUG_LOGGING` (`1` enables detailed loop/button debug logs)
 - `FONT_PATH_REGULAR`, `FONT_PATH_BOLD`, `FONT_PATH_SYMBOLS` (override font paths)
 
+## Architecture + Assumptions
+
+Code layout:
+
+- `plexlcd.py`: app entrypoint, render loop orchestration, framebuffer output, GPIO wiring.
+- `config.py`: env parsing + validation (`Config.from_env`).
+- `models.py`: shared dataclasses (`WeatherInfo`, `PlexTrack`, `LoopState`).
+- `plex_service.py`: Plex API/session parsing, cover fetch, playback command dispatch.
+- `weather_service.py`: weather API fetch + weather labels/symbols.
+
+Runtime assumptions:
+
+- Plex is the source of truth for playback state (`Player.state` / `Session.state`).
+- `PLAYER_NAME` must match Plex session player name exactly.
+- Framebuffer device exists and is writable (`FB_DEVICE`, usually `/dev/fb1`).
+- Weather is best-effort: failures should not stop playback rendering.
+- Some metadata fields are optional (cover art, elapsed/duration, weather extras) and UI degrades gracefully.
+
 ## Expected Output
 
 - `./setup_plexlcd.sh test` should report successful Plex connectivity.

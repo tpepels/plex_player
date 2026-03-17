@@ -24,6 +24,12 @@ def normalize_playback_state(item: dict) -> str:
     player_state = str(player.get("state") or "").strip().lower()
     session_state = str(session.get("state") or "").strip().lower()
 
+    # Some clients keep Player.state as "playing" while Session.state moves to
+    # paused/stopped. Preserve those non-playing transitions so UI can leave the
+    # now-playing screen immediately.
+    if player_state == "playing" and session_state in {"paused", "stopped"}:
+        return session_state
+
     if player_state and player_state != "none":
         return player_state
     if session_state and session_state != "none":
