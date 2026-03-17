@@ -95,6 +95,7 @@ BUTTON_LABEL_STOP_Y_PERCENT = 40
 BUTTON_LABEL_NEXT_Y_PERCENT = 60
 POLL_SECONDS = 3
 WEATHER_REFRESH_SECONDS = 900
+PROGRESS_UPDATE_SECONDS = 5
 DISPLAY_X_SHIFT = 0
 CONTROLLER_CLIENT_ID = env("CONTROLLER_CLIENT_ID", f"plexlcd-{socket.gethostname()}")
 DEBUG_LOGGING = env("DEBUG_LOGGING", "0").strip().lower() in {"1", "true", "yes", "on"}
@@ -236,6 +237,7 @@ def validate_startup():
             "BUTTON_LABEL_NEXT_Y_PERCENT": cfg.button_label_next_y_percent,
             "POLL_SECONDS": cfg.poll_seconds,
             "WEATHER_REFRESH_SECONDS": cfg.weather_refresh_seconds,
+            "PROGRESS_UPDATE_SECONDS": cfg.progress_update_seconds,
             "DISPLAY_X_SHIFT": cfg.display_x_shift,
             "DEBUG_LOGGING": cfg.debug_logging,
         }
@@ -595,7 +597,12 @@ def render_playing_frame(state: LoopState, track: PlexTrack, now_ts: float) -> N
         or state.last_player_state != "playing"
     )
     elapsed_second = (track.elapsed_ms // 1000) if track.elapsed_ms is not None else None
-    progress_changed = elapsed_second != state.last_elapsed_second
+    progress_bucket = (
+        elapsed_second // PROGRESS_UPDATE_SECONDS
+        if elapsed_second is not None and PROGRESS_UPDATE_SECONDS > 0
+        else None
+    )
+    progress_changed = progress_bucket != state.last_elapsed_second
     needs_retry = (
         not state.cached_cover
         and track.thumb_path == state.last_thumb_path
@@ -636,7 +643,7 @@ def render_playing_frame(state: LoopState, track: PlexTrack, now_ts: float) -> N
             state.last_thumb_path = track.thumb_path
             state.last_track_title = track.title
             state.last_player_state = "playing"
-            state.last_elapsed_second = elapsed_second
+            state.last_elapsed_second = progress_bucket
             state.next_cover_retry_ts = 0.0
             return
         write_fallback_placeholder("Render Error", context="now-playing render")
@@ -647,7 +654,7 @@ def render_playing_frame(state: LoopState, track: PlexTrack, now_ts: float) -> N
         state.last_thumb_path = track.thumb_path
         state.last_track_title = track.title
         state.last_player_state = "playing"
-        state.last_elapsed_second = elapsed_second
+        state.last_elapsed_second = progress_bucket
 
 
 def render_idle_frame(state: LoopState, track: Optional[PlexTrack]) -> None:

@@ -35,6 +35,7 @@ class Config:
     button_label_next_y_percent: int
     poll_seconds: int
     weather_refresh_seconds: int
+    progress_update_seconds: int
     display_x_shift: int
     debug_logging: bool
 
@@ -94,6 +95,7 @@ class Config:
             button_label_next_y_percent=parse_int("BUTTON_LABEL_NEXT_Y_PERCENT", "60"),
             poll_seconds=parse_int("POLL_SECONDS", "3"),
             weather_refresh_seconds=parse_int("WEATHER_REFRESH_SECONDS", "900"),
+            progress_update_seconds=parse_int("PROGRESS_UPDATE_SECONDS", "5"),
             display_x_shift=parse_int("DISPLAY_X_SHIFT", "0"),
             debug_logging=parse_bool("DEBUG_LOGGING", "0"),
         )
@@ -108,6 +110,8 @@ class Config:
             errors.append("POLL_SECONDS must be >= 1")
         if cfg.weather_refresh_seconds < 60:
             errors.append("WEATHER_REFRESH_SECONDS must be >= 60")
+        if cfg.progress_update_seconds < 1:
+            errors.append("PROGRESS_UPDATE_SECONDS must be >= 1")
         if abs(cfg.display_x_shift) >= max(1, cfg.width):
             errors.append("DISPLAY_X_SHIFT must be smaller than WIDTH")
 
