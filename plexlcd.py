@@ -240,34 +240,33 @@ def validate_startup():
             log_message("startup", f"- {err}", level="ERROR", stderr=True)
         sys.exit(1)
 
-    globals().update(
-        {
-            "PLEX_SERVER": cfg.plex_server,
-            "PLEX_TOKEN": cfg.plex_token,
-            "PLAYER_NAME": cfg.player_name,
-            "LATITUDE": cfg.latitude,
-            "LONGITUDE": cfg.longitude,
-            "TIMEZONE": cfg.timezone,
-            "LOCATION_NAME": cfg.location_name,
-            "FB_DEVICE": cfg.fb_device,
-            "WIDTH": cfg.width,
-            "HEIGHT": cfg.height,
-            "BUTTONS_ENABLED": cfg.buttons_enabled,
-            "BUTTON_PLAY_PAUSE_PIN": cfg.button_play_pause_pin,
-            "BUTTON_STOP_PIN": cfg.button_stop_pin,
-            "BUTTON_NEXT_PIN": cfg.button_next_pin,
-            "BUTTON_BOUNCE_TIME": cfg.button_bounce_time,
-            "BUTTON_LABEL_PLAY_Y_PERCENT": cfg.button_label_play_y_percent,
-            "BUTTON_LABEL_STOP_Y_PERCENT": cfg.button_label_stop_y_percent,
-            "BUTTON_LABEL_NEXT_Y_PERCENT": cfg.button_label_next_y_percent,
-            "POLL_SECONDS": cfg.poll_seconds,
-            "WEATHER_REFRESH_SECONDS": cfg.weather_refresh_seconds,
-            "PROGRESS_UPDATE_SECONDS": cfg.progress_update_seconds,
-            "NO_TRACK_GRACE_SECONDS": cfg.no_track_grace_seconds,
-            "DISPLAY_X_SHIFT": cfg.display_x_shift,
-            "DEBUG_LOGGING": cfg.debug_logging,
-        }
-    )
+    field_map = {
+        "PLEX_SERVER": "plex_server",
+        "PLEX_TOKEN": "plex_token",
+        "PLAYER_NAME": "player_name",
+        "LATITUDE": "latitude",
+        "LONGITUDE": "longitude",
+        "TIMEZONE": "timezone",
+        "LOCATION_NAME": "location_name",
+        "FB_DEVICE": "fb_device",
+        "WIDTH": "width",
+        "HEIGHT": "height",
+        "BUTTONS_ENABLED": "buttons_enabled",
+        "BUTTON_PLAY_PAUSE_PIN": "button_play_pause_pin",
+        "BUTTON_STOP_PIN": "button_stop_pin",
+        "BUTTON_NEXT_PIN": "button_next_pin",
+        "BUTTON_BOUNCE_TIME": "button_bounce_time",
+        "BUTTON_LABEL_PLAY_Y_PERCENT": "button_label_play_y_percent",
+        "BUTTON_LABEL_STOP_Y_PERCENT": "button_label_stop_y_percent",
+        "BUTTON_LABEL_NEXT_Y_PERCENT": "button_label_next_y_percent",
+        "POLL_SECONDS": "poll_seconds",
+        "WEATHER_REFRESH_SECONDS": "weather_refresh_seconds",
+        "PROGRESS_UPDATE_SECONDS": "progress_update_seconds",
+        "NO_TRACK_GRACE_SECONDS": "no_track_grace_seconds",
+        "DISPLAY_X_SHIFT": "display_x_shift",
+        "DEBUG_LOGGING": "debug_logging",
+    }
+    globals().update({name: getattr(cfg, attr) for name, attr in field_map.items()})
 
     log_message("startup", "Configuration validated successfully")
 
@@ -703,6 +702,23 @@ def render_playing_frame(state: LoopState, track: PlexTrack, now_ts: float) -> N
         state.next_cover_retry_ts = next_retry_ts
 
 
+def reset_idle_render_cache(state: LoopState, minute_key: str, idle_state: str, toast_visible: bool) -> None:
+    """Reset transient now-playing cache when idle frame becomes authoritative."""
+
+    state.last_idle_minute = minute_key
+    state.last_player_state = idle_state
+    state.last_thumb_path = None
+    state.last_track_title = None
+    state.last_track_identity = None
+    state.last_elapsed_second = None
+    state.last_reported_elapsed_ms = None
+    state.elapsed_anchor_ms = None
+    state.elapsed_anchor_ts = 0.0
+    state.last_toast_visible = toast_visible
+    state.cached_cover = None
+    state.next_cover_retry_ts = 0.0
+
+
 def render_idle_frame(state: LoopState, track: Optional[PlexTrack]) -> None:
     """Render idle/paused/stopped screen when minute or state changes."""
     # Assumption: minute-level redraw cadence is sufficient for clock in idle mode.
@@ -718,18 +734,7 @@ def render_idle_frame(state: LoopState, track: Optional[PlexTrack]) -> None:
         render_idle(state.last_weather, playback_status=status_text, playback_state=idle_state),
         context="idle render",
     ):
-        state.last_idle_minute = minute_key
-        state.last_player_state = idle_state
-        state.last_thumb_path = None
-        state.last_track_title = None
-        state.last_track_identity = None
-        state.last_elapsed_second = None
-        state.last_reported_elapsed_ms = None
-        state.elapsed_anchor_ms = None
-        state.elapsed_anchor_ts = 0.0
-        state.last_toast_visible = toast_visible
-        state.cached_cover = None
-        state.next_cover_retry_ts = 0.0
+        reset_idle_render_cache(state, minute_key, idle_state, toast_visible)
         return
 
     write_fallback_placeholder("Display Error", context="idle render")
