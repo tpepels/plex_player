@@ -38,6 +38,8 @@ chmod +x setup_plexlcd.sh
 ./setup_plexlcd.sh configure
 ```
 
+By default, `configure` asks only the required values (`PLEX_SERVER`, `PLEX_TOKEN`, `PLAYER_NAME`) and keeps sensible defaults for everything else. It offers an optional advanced step for weather/display/button tuning.
+
 1. Test Plex connectivity and player detection:
 
 ```bash

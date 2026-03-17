@@ -60,6 +60,25 @@ prompt_secret() {
   printf '%s' "$value"
 }
 
+prompt_yes_no() {
+  local prompt="$1"
+  local default_no="${2:-1}"
+  local answer
+  if [[ "$default_no" -eq 1 ]]; then
+    read -r -p "$prompt [y/N]: " answer || true
+  else
+    read -r -p "$prompt [Y/n]: " answer || true
+  fi
+  answer="${answer,,}"
+  if [[ -z "$answer" ]]; then
+    if [[ "$default_no" -eq 1 ]]; then
+      return 1
+    fi
+    return 0
+  fi
+  [[ "$answer" == "y" || "$answer" == "yes" ]]
+}
+
 load_env_file() {
   local file="$1"
   local line key value
@@ -101,27 +120,73 @@ load_env_file() {
 write_env() {
   mkdir -p "$APP_DIR"
 
-  local plex_host player_name plex_token latitude longitude timezone location_name fb_device width height poll_seconds weather_refresh display_x_shift buttons_enabled button_play_pause_pin button_stop_pin button_next_pin button_label_play_y_percent button_label_stop_y_percent button_label_next_y_percent
-  plex_host=$(prompt_default "Plex server URL" "http://plex.local:32400")
-  player_name=$(prompt_default "Exact Plexamp player name" "Plexamp Pi Zero")
-  plex_token=$(prompt_secret "Plex token")
-  latitude=$(prompt_default "Latitude" "0.0000")
-  longitude=$(prompt_default "Longitude" "0.0000")
-  timezone=$(prompt_default "Timezone" "UTC")
-  location_name=$(prompt_default "Location name shown on display" "")
-  fb_device=$(prompt_default "Framebuffer device" "/dev/fb1")
-  width=$(prompt_default "Display width" "320")
-  height=$(prompt_default "Display height" "240")
-  display_x_shift=$(prompt_default "Display X shift (pixels, negative/positive)" "0")
-  buttons_enabled=$(prompt_default "Enable GPIO buttons (0/1)" "1")
-  button_play_pause_pin=$(prompt_default "Play/Pause button GPIO pin" "23")
-  button_stop_pin=$(prompt_default "Stop button GPIO pin" "24")
-  button_next_pin=$(prompt_default "Next button GPIO pin" "25")
-  button_label_play_y_percent=$(prompt_default "Play/Pause label Y percent" "20")
-  button_label_stop_y_percent=$(prompt_default "Stop label Y percent" "40")
-  button_label_next_y_percent=$(prompt_default "Next label Y percent" "60")
-  poll_seconds=$(prompt_default "Plex poll interval seconds" "3")
-  weather_refresh=$(prompt_default "Weather refresh seconds" "900")
+  if [[ -f "$ENV_FILE" ]]; then
+    load_env_file "$ENV_FILE" || true
+  fi
+
+  local plex_host player_name plex_token latitude longitude timezone location_name fb_device width height poll_seconds weather_refresh display_x_shift buttons_enabled button_play_pause_pin button_stop_pin button_next_pin button_label_play_y_percent button_label_stop_y_percent button_label_next_y_percent progress_update_seconds no_track_grace_seconds
+
+  # Baseline defaults (or existing values when re-running configure)
+  plex_host="${PLEX_SERVER:-http://plex.local:32400}"
+  player_name="${PLAYER_NAME:-Plexamp Pi Zero}"
+  plex_token="${PLEX_TOKEN:-}"
+  latitude="${LATITUDE:-0.0000}"
+  longitude="${LONGITUDE:-0.0000}"
+  timezone="${TIMEZONE:-UTC}"
+  location_name="${LOCATION_NAME:-}"
+  fb_device="${FB_DEVICE:-/dev/fb1}"
+  width="${WIDTH:-320}"
+  height="${HEIGHT:-240}"
+  display_x_shift="${DISPLAY_X_SHIFT:-0}"
+  buttons_enabled="${BUTTONS_ENABLED:-1}"
+  button_play_pause_pin="${BUTTON_PLAY_PAUSE_PIN:-23}"
+  button_stop_pin="${BUTTON_STOP_PIN:-24}"
+  button_next_pin="${BUTTON_NEXT_PIN:-25}"
+  button_label_play_y_percent="${BUTTON_LABEL_PLAY_Y_PERCENT:-20}"
+  button_label_stop_y_percent="${BUTTON_LABEL_STOP_Y_PERCENT:-40}"
+  button_label_next_y_percent="${BUTTON_LABEL_NEXT_Y_PERCENT:-60}"
+  poll_seconds="${POLL_SECONDS:-3}"
+  weather_refresh="${WEATHER_REFRESH_SECONDS:-900}"
+  progress_update_seconds="${PROGRESS_UPDATE_SECONDS:-5}"
+  no_track_grace_seconds="${NO_TRACK_GRACE_SECONDS:-4.0}"
+
+  log "Minimal setup (required fields only)"
+  plex_host=$(prompt_default "Plex server URL" "$plex_host")
+  player_name=$(prompt_default "Exact Plexamp player name" "$player_name")
+  if [[ -n "$plex_token" ]] && prompt_yes_no "Keep existing Plex token" 1; then
+    :
+  else
+    plex_token=$(prompt_secret "Plex token")
+  fi
+
+  if [[ -z "$plex_token" ]]; then
+    log "PLEX_TOKEN cannot be empty"
+    return 1
+  fi
+
+  if prompt_yes_no "Configure advanced settings (weather/display/buttons)?" 1; then
+    latitude=$(prompt_default "Latitude" "$latitude")
+    longitude=$(prompt_default "Longitude" "$longitude")
+    timezone=$(prompt_default "Timezone" "$timezone")
+    location_name=$(prompt_default "Location name shown on display" "$location_name")
+    fb_device=$(prompt_default "Framebuffer device" "$fb_device")
+    width=$(prompt_default "Display width" "$width")
+    height=$(prompt_default "Display height" "$height")
+    display_x_shift=$(prompt_default "Display X shift (pixels, negative/positive)" "$display_x_shift")
+    buttons_enabled=$(prompt_default "Enable GPIO buttons (0/1)" "$buttons_enabled")
+    button_play_pause_pin=$(prompt_default "Play/Pause button GPIO pin" "$button_play_pause_pin")
+    button_stop_pin=$(prompt_default "Stop button GPIO pin" "$button_stop_pin")
+    button_next_pin=$(prompt_default "Next button GPIO pin" "$button_next_pin")
+    button_label_play_y_percent=$(prompt_default "Play/Pause label Y percent" "$button_label_play_y_percent")
+    button_label_stop_y_percent=$(prompt_default "Stop label Y percent" "$button_label_stop_y_percent")
+    button_label_next_y_percent=$(prompt_default "Next label Y percent" "$button_label_next_y_percent")
+    poll_seconds=$(prompt_default "Plex poll interval seconds" "$poll_seconds")
+    weather_refresh=$(prompt_default "Weather refresh seconds" "$weather_refresh")
+    progress_update_seconds=$(prompt_default "Progress update seconds" "$progress_update_seconds")
+    no_track_grace_seconds=$(prompt_default "No-track grace seconds" "$no_track_grace_seconds")
+  else
+    log "Using defaults for weather/display/buttons. You can re-run configure anytime."
+  fi
 
   cat > "$ENV_FILE" <<EOFENV
 PLEX_SERVER="$plex_host"
@@ -144,10 +209,13 @@ BUTTON_LABEL_STOP_Y_PERCENT="$button_label_stop_y_percent"
 BUTTON_LABEL_NEXT_Y_PERCENT="$button_label_next_y_percent"
 POLL_SECONDS="$poll_seconds"
 WEATHER_REFRESH_SECONDS="$weather_refresh"
+PROGRESS_UPDATE_SECONDS="$progress_update_seconds"
+NO_TRACK_GRACE_SECONDS="$no_track_grace_seconds"
 EOFENV
 
   chmod 600 "$ENV_FILE"
   log "Wrote $ENV_FILE"
+  log "Next: $(basename "$0") test"
 }
 
 test_plex() {
@@ -273,7 +341,7 @@ Usage: $(basename "$0") [command]
 Commands:
   help            Show token/player-name instructions
   install         Install dependencies
-  configure       Create or update $ENV_FILE interactively
+  configure       Guided setup (minimal prompts + optional advanced)
   test            Test Plex connectivity and list players from current sessions
   fb              Show framebuffer devices
   service         Install and start systemd service
