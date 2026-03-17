@@ -31,7 +31,14 @@ from plex_service import (
     playback_status_text,
     send_playback_command,
 )
-from transition_rules import apply_button_rules, compute_display_elapsed_ms, resolve_transition, resolve_wait_timeout
+from transition_rules import (
+    apply_button_rules,
+    apply_transition_decision,
+    compute_display_elapsed_ms,
+    resolve_transition,
+    resolve_wait_timeout,
+    should_poll_timeline,
+)
 from weather_service import WEATHER_CODES, fetch_weather, get_weather_symbol
 from zoneinfo import ZoneInfo
 
@@ -618,6 +625,15 @@ def update_current_player_context(track: Optional[PlexTrack]) -> None:
 
 def render_playing_frame(state: LoopState, track: PlexTrack, now_ts: float) -> None:
     """Render now-playing state, refreshing cover art only when needed."""
+
+    def _commit_playing_frame_state(next_retry_ts: float) -> None:
+        state.last_thumb_path = track.thumb_path
+        state.last_track_title = track.title
+        state.last_player_state = "playing"
+        state.last_elapsed_second = progress_bucket
+        state.last_toast_visible = toast_visible
+        state.next_cover_retry_ts = next_retry_ts
+
     # Assumption: cover art is expensive enough to cache between loop cycles.
     needs_refresh = (
         track.thumb_path != state.last_thumb_path
@@ -675,23 +691,16 @@ def render_playing_frame(state: LoopState, track: PlexTrack, now_ts: float) -> N
             render_now_playing(state.cached_cover, track, elapsed_ms=display_elapsed_ms),
             context="now-playing render",
         ):
-            state.last_thumb_path = track.thumb_path
-            state.last_track_title = track.title
-            state.last_player_state = "playing"
-            state.last_elapsed_second = progress_bucket
-            state.last_toast_visible = toast_visible
-            state.next_cover_retry_ts = 0.0
+            _commit_playing_frame_state(0.0)
             return
         write_fallback_placeholder("Render Error", context="now-playing render")
         return
 
-    state.next_cover_retry_ts = now_ts + COVER_RETRY_SECONDS
+    next_retry_ts = now_ts + COVER_RETRY_SECONDS
     if try_write_framebuffer(create_error_placeholder("No Album Art"), context="no-album-art render"):
-        state.last_thumb_path = track.thumb_path
-        state.last_track_title = track.title
-        state.last_player_state = "playing"
-        state.last_elapsed_second = progress_bucket
-        state.last_toast_visible = toast_visible
+        _commit_playing_frame_state(next_retry_ts)
+    else:
+        state.next_cover_retry_ts = next_retry_ts
 
 
 def render_idle_frame(state: LoopState, track: Optional[PlexTrack]) -> None:
@@ -744,6 +753,18 @@ def wait_for_next_cycle(state: LoopState) -> None:
         time.sleep(0.5)
 
 
+def render_from_transition(state: LoopState, decision: TransitionMode, track: Optional[PlexTrack], now_ts: float, idle_track: Optional[PlexTrack]) -> None:
+    """Route rendering based on resolved transition mode."""
+
+    if decision == TransitionMode.PLAYING and track is not None:
+        render_playing_frame(state, track, now_ts)
+        return
+    if decision == TransitionMode.HOLD:
+        # Preserve current now-playing frame while Plex transitions between tracks.
+        return
+    render_idle_frame(state, idle_track)
+
+
 # Application entrypoint
 def main():
     """Main app loop: fetch state, render frame, and sleep/wake for next cycle."""
@@ -770,10 +791,7 @@ def main():
             timeline_state: Optional[str] = None
 
             # Collect direct Plexamp timeline state as additional rule input.
-            if (
-                (track and track.state == "playing")
-                or (not track and str(state.last_player_state or "").strip().lower() == "playing")
-            ):
+            if should_poll_timeline(track, state.last_player_state):
                 timeline = fetch_player_timeline_state(
                     player_addr=RUNTIME_STATE.current_player_address,
                     player_port=RUNTIME_STATE.current_player_port,
@@ -795,21 +813,9 @@ def main():
                 timeline_state=timeline_state,
             )
             decision = resolve_transition(snapshot, no_track_grace_seconds=NO_TRACK_GRACE_SECONDS)
+            apply_transition_decision(RUNTIME_STATE, state, decision)
 
-            if decision.clear_force_idle:
-                RUNTIME_STATE.force_idle_until_ts = 0.0
-            if decision.clear_pending_command:
-                RUNTIME_STATE.pending_command = None
-            if decision.set_no_track_grace_until_ts is not None:
-                state.no_track_grace_until_ts = decision.set_no_track_grace_until_ts
-
-            if decision.mode == TransitionMode.PLAYING and track is not None:
-                render_playing_frame(state, track, now_ts)
-            elif decision.mode == TransitionMode.HOLD:
-                # Preserve current now-playing frame while Plex transitions between tracks.
-                pass
-            else:
-                render_idle_frame(state, decision.idle_track)
+            render_from_transition(state, decision.mode, track, now_ts, decision.idle_track)
 
         except KeyboardInterrupt:
             raise

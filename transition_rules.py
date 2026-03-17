@@ -115,6 +115,14 @@ def apply_button_rules(
     )
 
 
+def should_poll_timeline(track: Optional[PlexTrack], last_player_state: Optional[str]) -> bool:
+    """Policy helper to decide whether direct timeline polling is useful this cycle."""
+
+    if track and str(track.state or "").strip().lower() == "playing":
+        return True
+    return str(last_player_state or "").strip().lower() == "playing"
+
+
 def resolve_transition(snapshot: PlaybackSnapshot, *, no_track_grace_seconds: float) -> TransitionDecision:
     """Resolve transition rules from Plex snapshot plus local button intent."""
 
@@ -205,6 +213,17 @@ def resolve_transition(snapshot: PlaybackSnapshot, *, no_track_grace_seconds: fl
         idle_track=_idle_track_from_effective_state(snapshot.track, track_state),
         clear_pending_command=clear_pending,
     )
+
+
+def apply_transition_decision(runtime_state: RuntimeState, loop_state: LoopState, decision: TransitionDecision) -> None:
+    """Reducer-style state application for transition side effects."""
+
+    if decision.clear_force_idle:
+        runtime_state.force_idle_until_ts = 0.0
+    if decision.clear_pending_command:
+        runtime_state.pending_command = None
+    if decision.set_no_track_grace_until_ts is not None:
+        loop_state.no_track_grace_until_ts = decision.set_no_track_grace_until_ts
 
 
 def resolve_wait_timeout(

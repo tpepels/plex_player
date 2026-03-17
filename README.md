@@ -100,6 +100,7 @@ Code layout:
 - `config.py`: env parsing + validation (`Config.from_env`).
 - `models.py`: shared dataclasses (`WeatherInfo`, `PlexTrack`, `LoopState`).
 - `transition_rules.py`: explicit rule engine (`apply_button_rules`, `resolve_transition`, elapsed interpolation rule).
+  - Includes policy helpers (`should_poll_timeline`) and reducer-style side effect application (`apply_transition_decision`) so orchestration avoids inline state mutations.
 - `test_transition_rules.py`: unit tests for rule precedence, button intent, and elapsed interpolation edge cases.
 - `plex_service.py`: Plex API/session parsing, cover fetch, playback command dispatch.
 - `weather_service.py`: weather API fetch + weather labels/symbols.

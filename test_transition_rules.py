@@ -1,7 +1,14 @@
 import unittest
 
-from models import LoopState, PlaybackSnapshot, PlexTrack, RuntimeState, TransitionMode
-from transition_rules import apply_button_rules, compute_display_elapsed_ms, resolve_transition, resolve_wait_timeout
+from models import LoopState, PlaybackSnapshot, PlexTrack, RuntimeState, TransitionDecision, TransitionMode
+from transition_rules import (
+    apply_button_rules,
+    apply_transition_decision,
+    compute_display_elapsed_ms,
+    resolve_transition,
+    resolve_wait_timeout,
+    should_poll_timeline,
+)
 
 
 class TransitionRulesTests(unittest.TestCase):
@@ -251,6 +258,25 @@ class TransitionRulesTests(unittest.TestCase):
         _ = compute_display_elapsed_ms(state, t1, now_ts=100.0)
         value = compute_display_elapsed_ms(state, t2, now_ts=101.0)
         self.assertEqual(value, 1_000)
+
+    def test_should_poll_timeline_only_when_recently_or_currently_playing(self):
+        self.assertTrue(should_poll_timeline(self._track(state="playing"), "paused"))
+        self.assertTrue(should_poll_timeline(None, "playing"))
+        self.assertFalse(should_poll_timeline(self._track(state="paused"), "paused"))
+
+    def test_apply_transition_decision_reducer_updates_states(self):
+        runtime = RuntimeState(force_idle_until_ts=123.0, pending_command=None)
+        state = LoopState(no_track_grace_until_ts=0.0)
+        decision = TransitionDecision(
+            mode=TransitionMode.PLAYING,
+            reason="unit_test",
+            set_no_track_grace_until_ts=14.0,
+            clear_force_idle=True,
+            clear_pending_command=False,
+        )
+        apply_transition_decision(runtime, state, decision)
+        self.assertEqual(runtime.force_idle_until_ts, 0.0)
+        self.assertEqual(state.no_track_grace_until_ts, 14.0)
 
 
 if __name__ == "__main__":
