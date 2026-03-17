@@ -101,6 +101,7 @@ CONTROLLER_CLIENT_ID = env("CONTROLLER_CLIENT_ID", f"plexlcd-{socket.gethostname
 DEBUG_LOGGING = env("DEBUG_LOGGING", "0").strip().lower() in {"1", "true", "yes", "on"}
 HTTP_TIMEOUT = 10
 COVER_RETRY_SECONDS = 20
+TOAST_DURATION_SECONDS = 0.7
 BUTTON_DEVICES = []
 RUNTIME_STATE = RuntimeState()
 REFRESH_EVENT = threading.Event()
@@ -172,6 +173,7 @@ FONT_META = load_font(FONT_PATH_REGULAR, 18)
 FONT_LABEL = load_font(FONT_PATH_SYMBOLS, 12)
 FONT_WEATHER_ICON = load_font(FONT_PATH_SYMBOLS, 22)
 FONT_PROGRESS = load_font(FONT_PATH_REGULAR, 12)
+FONT_TOAST = load_font(FONT_PATH_REGULAR, 14)
 
 
 def format_ms(ms: Optional[int]) -> str:
@@ -188,13 +190,15 @@ def draw_toast(img: Image.Image) -> Image.Image:
     base = img.convert("RGBA")
     overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
     od = ImageDraw.Draw(overlay)
-    bbox = od.textbbox((0, 0), RUNTIME_STATE.toast_text, font=FONT_SMALL)
+    bbox = od.textbbox((0, 0), RUNTIME_STATE.toast_text, font=FONT_TOAST)
     tw = bbox[2] - bbox[0]
     th = bbox[3] - bbox[1]
-    px = max(0, (WIDTH - tw) // 2 - 8)
-    py = 4
-    od.rounded_rectangle((px, py, px + tw + 16, py + th + 10), radius=6, fill=(0, 0, 0, 150))
-    od.text((px + 8, py + 5), RUNTIME_STATE.toast_text, font=FONT_SMALL, fill="#ffffff")
+    pad_x = 6
+    pad_y = 3
+    px = max(0, (WIDTH - (tw + pad_x * 2)) // 2)
+    py = 3
+    od.rounded_rectangle((px, py, px + tw + pad_x * 2, py + th + pad_y * 2), radius=5, fill=(0, 0, 0, 150))
+    od.text((px + pad_x - bbox[0], py + pad_y - bbox[1]), RUNTIME_STATE.toast_text, font=FONT_TOAST, fill="#ffffff")
     return Image.alpha_composite(base, overlay).convert("RGB")
 
 
@@ -274,7 +278,7 @@ def send_plex_playback_command(action: str):
             RUNTIME_STATE.toast_text = "Paused" if RUNTIME_STATE.current_playback_state == "playing" else "Playing"
         else:
             RUNTIME_STATE.toast_text = "Command sent"
-        RUNTIME_STATE.toast_until_ts = time.monotonic() + 1.0
+        RUNTIME_STATE.toast_until_ts = time.monotonic() + TOAST_DURATION_SECONDS
         REFRESH_EVENT.set()
 
 
@@ -458,26 +462,15 @@ def render_idle(
         text_center(draw, 152, temp, FONT_WEATHER, fill="white")
         text_center(draw, 178, label, FONT_SMALL, fill="#cfcfcf")
 
-        details = []
-        if weather.humidity_pct is not None:
-            details.append(f"H {weather.humidity_pct}%")
-        if weather.temp_min_c is not None and weather.temp_max_c is not None:
-            details.append(f"L/H {round(weather.temp_min_c):.0f}/{round(weather.temp_max_c):.0f}C")
-        footer_row = 194
-        if details:
-            text_center(draw, footer_row, "  ".join(details), FONT_PROGRESS, fill="#bfbfbf")
-            footer_row += 14
-
         if weather.next_hour_weather_code is not None and weather.next_hour_temp_c is not None:
-            next_label = WEATHER_CODES.get(weather.next_hour_weather_code, "Weather")
-            next_text = f"Next hr: {next_label} {round(weather.next_hour_temp_c):.0f}C"
-            text_center(draw, footer_row, next_text, FONT_PROGRESS, fill="#a8a8a8")
-            footer_row += 14
+            next_symbol = get_weather_symbol(weather.next_hour_weather_code, weather.is_day)
+            next_text = f"Next: {next_symbol} {round(weather.next_hour_temp_c):.0f}C"
+            text_center(draw, 206, next_text, FONT_SMALL, fill="#b8b8b8")
     else:
         text_center(draw, 152, "Weather unavailable", FONT_SMALL, fill="#888888")
 
     if playback_status:
-        status_y = 222 if weather else 204
+        status_y = 224 if weather else 204
         text_center(draw, status_y, f"Status: {playback_status}", FONT_PROGRESS, fill="#9f9f9f")
 
     idle_actions: tuple[str, ...] = ()
