@@ -72,6 +72,9 @@ class LoopState:
     last_player_state: Optional[str] = None
     last_idle_minute: Optional[str] = None
     last_elapsed_second: Optional[int] = None
+    last_reported_elapsed_ms: Optional[int] = None
+    elapsed_anchor_ms: Optional[int] = None
+    elapsed_anchor_ts: float = 0.0
     last_toast_visible: Optional[bool] = None
     cached_cover: Optional[Image.Image] = None
     next_cover_retry_ts: float = 0.0

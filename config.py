@@ -96,7 +96,7 @@ class Config:
             button_label_next_y_percent=parse_int("BUTTON_LABEL_NEXT_Y_PERCENT", "60"),
             poll_seconds=parse_int("POLL_SECONDS", "3"),
             weather_refresh_seconds=parse_int("WEATHER_REFRESH_SECONDS", "900"),
-            progress_update_seconds=parse_int("PROGRESS_UPDATE_SECONDS", "5"),
+            progress_update_seconds=parse_int("PROGRESS_UPDATE_SECONDS", "3"),
             no_track_grace_seconds=parse_float("NO_TRACK_GRACE_SECONDS", "4.0"),
             display_x_shift=parse_int("DISPLAY_X_SHIFT", "0"),
             debug_logging=parse_bool("DEBUG_LOGGING", "0"),

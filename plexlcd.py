@@ -95,7 +95,7 @@ BUTTON_LABEL_STOP_Y_PERCENT = 40
 BUTTON_LABEL_NEXT_Y_PERCENT = 60
 POLL_SECONDS = 3
 WEATHER_REFRESH_SECONDS = 900
-PROGRESS_UPDATE_SECONDS = 5
+PROGRESS_UPDATE_SECONDS = 3
 DISPLAY_X_SHIFT = 0
 CONTROLLER_CLIENT_ID = env("CONTROLLER_CLIENT_ID", f"plexlcd-{socket.gethostname()}")
 DEBUG_LOGGING = env("DEBUG_LOGGING", "0").strip().lower() in {"1", "true", "yes", "on"}
@@ -477,16 +477,26 @@ def render_idle(
             next_symbol = get_weather_symbol(weather.next_hour_weather_code, weather.is_day)
             next_temp_text = f"{round(weather.next_hour_temp_c):.0f}C"
             next_prefix = "Next hr:"
-            prefix_w = int(draw.textlength(next_prefix, font=FONT_PROGRESS))
-            icon_w = int(draw.textlength(next_symbol, font=FONT_WEATHER_ICON))
-            temp_w = int(draw.textlength(next_temp_text, font=FONT_SMALL))
+            prefix_bbox = draw.textbbox((0, 0), next_prefix, font=FONT_PROGRESS)
+            icon_bbox = draw.textbbox((0, 0), next_symbol, font=FONT_WEATHER_ICON)
+            temp_bbox = draw.textbbox((0, 0), next_temp_text, font=FONT_SMALL)
+            prefix_w = prefix_bbox[2] - prefix_bbox[0]
+            icon_w = icon_bbox[2] - icon_bbox[0]
+            temp_w = temp_bbox[2] - temp_bbox[0]
+            prefix_h = prefix_bbox[3] - prefix_bbox[1]
+            icon_h = icon_bbox[3] - icon_bbox[1]
+            temp_h = temp_bbox[3] - temp_bbox[1]
             gap = 6
             row_w = prefix_w + gap + icon_w + gap + temp_w
             row_x = max(0, (WIDTH - row_w) // 2)
             row_y = 194
-            draw.text((row_x, row_y + 2), next_prefix, font=FONT_PROGRESS, fill="#b8b8b8")
-            draw.text((row_x + prefix_w + gap, row_y), next_symbol, font=FONT_WEATHER_ICON, fill="#b8b8b8")
-            draw.text((row_x + prefix_w + gap + icon_w + gap, row_y + 2), next_temp_text, font=FONT_SMALL, fill="#b8b8b8")
+            row_h = max(prefix_h, icon_h, temp_h)
+            prefix_y = row_y + (row_h - prefix_h) // 2 - prefix_bbox[1]
+            icon_y = row_y + (row_h - icon_h) // 2 - icon_bbox[1]
+            temp_y = row_y + (row_h - temp_h) // 2 - temp_bbox[1]
+            draw.text((row_x - prefix_bbox[0], prefix_y), next_prefix, font=FONT_PROGRESS, fill="#b8b8b8")
+            draw.text((row_x + prefix_w + gap - icon_bbox[0], icon_y), next_symbol, font=FONT_WEATHER_ICON, fill="#b8b8b8")
+            draw.text((row_x + prefix_w + gap + icon_w + gap - temp_bbox[0], temp_y), next_temp_text, font=FONT_SMALL, fill="#b8b8b8")
     else:
         text_center(draw, 152, "Weather unavailable", FONT_SMALL, fill="#888888")
 
@@ -549,6 +559,35 @@ def render_now_playing(cover: Image.Image, track: PlexTrack) -> Image.Image:
     return draw_toast(img)
 
 
+def compute_display_elapsed_ms(state: LoopState, track: PlexTrack, now_ts: float) -> Optional[int]:
+    """Estimate elapsed playback time between coarse Plex metadata updates."""
+
+    # Reset anchors when track identity changes.
+    if track.title != state.last_track_title:
+        state.last_reported_elapsed_ms = None
+        state.elapsed_anchor_ms = None
+        state.elapsed_anchor_ts = now_ts
+
+    reported_ms = track.elapsed_ms
+    if reported_ms is not None:
+        # Re-anchor whenever Plex advances or seeks/jumps.
+        if state.last_reported_elapsed_ms is None:
+            state.elapsed_anchor_ms = reported_ms
+            state.elapsed_anchor_ts = now_ts
+        elif reported_ms != state.last_reported_elapsed_ms:
+            state.elapsed_anchor_ms = reported_ms
+            state.elapsed_anchor_ts = now_ts
+        state.last_reported_elapsed_ms = reported_ms
+
+    if state.elapsed_anchor_ms is None:
+        return reported_ms
+
+    estimated = state.elapsed_anchor_ms + int(max(0.0, now_ts - state.elapsed_anchor_ts) * 1000)
+    if track.duration_ms and track.duration_ms > 0:
+        return max(0, min(estimated, track.duration_ms))
+    return max(0, estimated)
+
+
 def try_write_framebuffer(img: Image.Image, *, context: str) -> bool:
     """Write image to framebuffer and report errors consistently."""
     try:
@@ -598,7 +637,8 @@ def render_playing_frame(state: LoopState, track: PlexTrack, now_ts: float) -> N
         or track.title != state.last_track_title
         or state.last_player_state != "playing"
     )
-    elapsed_second = (track.elapsed_ms // 1000) if track.elapsed_ms is not None else None
+    display_elapsed_ms = compute_display_elapsed_ms(state, track, now_ts)
+    elapsed_second = (display_elapsed_ms // 1000) if display_elapsed_ms is not None else None
     progress_bucket = (
         elapsed_second // PROGRESS_UPDATE_SECONDS
         if elapsed_second is not None and PROGRESS_UPDATE_SECONDS > 0
@@ -644,7 +684,19 @@ def render_playing_frame(state: LoopState, track: PlexTrack, now_ts: float) -> N
         )
 
     if state.cached_cover:
-        if try_write_framebuffer(render_now_playing(state.cached_cover, track), context="now-playing render"):
+        track_for_render = PlexTrack(
+            title=track.title,
+            artist=track.artist,
+            album=track.album,
+            thumb_path=track.thumb_path,
+            state=track.state,
+            target_client_identifier=track.target_client_identifier,
+            player_address=track.player_address,
+            player_port=track.player_port,
+            elapsed_ms=display_elapsed_ms,
+            duration_ms=track.duration_ms,
+        )
+        if try_write_framebuffer(render_now_playing(state.cached_cover, track_for_render), context="now-playing render"):
             state.last_thumb_path = track.thumb_path
             state.last_track_title = track.title
             state.last_player_state = "playing"
@@ -684,6 +736,9 @@ def render_idle_frame(state: LoopState, track: Optional[PlexTrack]) -> None:
         state.last_thumb_path = None
         state.last_track_title = None
         state.last_elapsed_second = None
+        state.last_reported_elapsed_ms = None
+        state.elapsed_anchor_ms = None
+        state.elapsed_anchor_ts = 0.0
         state.last_toast_visible = toast_visible
         state.cached_cover = None
         state.next_cover_retry_ts = 0.0
