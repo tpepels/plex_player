@@ -1,3 +1,11 @@
+"""Plex API service functions.
+
+Design assumptions:
+- The app polls `status/sessions` and treats Plex as source-of-truth for playback state.
+- Network failures are expected and handled with short retry/backoff windows.
+- Functions in this module stay UI-agnostic and return normalized model objects for renderer code.
+"""
+
 import io
 import time
 from typing import Callable, Optional
@@ -24,6 +32,8 @@ def normalize_playback_state(item: dict) -> str:
 
 
 def playback_status_text(state: str) -> str:
+    """Map Plex raw state to concise UI label text."""
+
     mapping = {
         "playing": "Playing",
         "paused": "Paused",
@@ -40,6 +50,13 @@ def fetch_sessions_json(
     log_warn: Callable[[str], None],
     log_error: Callable[[str], None],
 ) -> Optional[dict]:
+    """Fetch active Plex sessions as JSON.
+
+    Assumptions:
+    - A valid token is required.
+    - Occasional transient failures are normal and should not crash the main loop.
+    """
+
     if not plex_token:
         log_error("Missing PLEX_TOKEN")
         return None
@@ -66,6 +83,13 @@ def fetch_sessions_json(
 
 
 def find_player_track(data: dict, player_name: str) -> Optional[PlexTrack]:
+    """Locate the session entry for the configured player name.
+
+    Assumptions:
+    - `player_name` must exactly match Plex session player title/name.
+    - Some metadata fields may be absent; caller must handle partial track payloads.
+    """
+
     container = data.get("MediaContainer", {})
     metadata = container.get("Metadata", [])
     if isinstance(metadata, dict):
@@ -75,6 +99,10 @@ def find_player_track(data: dict, player_name: str) -> Optional[PlexTrack]:
         player = item.get("Player", {})
         title = (player.get("title") or player.get("name") or "").strip()
         if title == player_name:
+            media = item.get("Media") or []
+            media0 = media[0] if isinstance(media, list) and media else {}
+            duration = item.get("duration") or media0.get("duration")
+            view_offset = item.get("viewOffset")
             thumb = (
                 item.get("thumb")
                 or item.get("grandparentThumb")
@@ -94,6 +122,8 @@ def find_player_track(data: dict, player_name: str) -> Optional[PlexTrack]:
                 ),
                 player_address=player.get("address"),
                 player_port=int(player.get("port") or 32500),
+                elapsed_ms=int(view_offset) if view_offset is not None else None,
+                duration_ms=int(duration) if duration is not None else None,
             )
     return None
 
@@ -108,6 +138,13 @@ def fetch_cover(
     log_warn: Callable[[str], None],
     log_error: Callable[[str], None],
 ) -> Optional[Image.Image]:
+    """Fetch and resize cover art to framebuffer dimensions.
+
+    Assumptions:
+    - Plex path thumbs may require token query parameter when using local relative paths.
+    - Returning `None` is acceptable and should trigger placeholder rendering.
+    """
+
     if not thumb_path:
         return None
 
@@ -155,6 +192,13 @@ def send_playback_command(
     log_debug: Callable[[str], None],
     log_error: Callable[[str], None],
 ) -> bool:
+    """Send a playback command to the active player endpoint.
+
+    Assumptions:
+    - Player direct endpoint (`http://<player_addr>:<port>`) is preferred when available.
+    - Boolean success/failure is enough for caller; detailed diagnostics are emitted via logger callbacks.
+    """
+
     endpoint_map = {
         "play_pause": "playPause",
         "stop": "stop",

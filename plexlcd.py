@@ -1,4 +1,17 @@
 #!/usr/bin/env python3
+"""Plex LCD application entrypoint and rendering loop.
+
+Module responsibilities:
+- Load and validate runtime configuration.
+- Poll Plex/weather services and transform data into framebuffer images.
+- Handle GPIO button events and dispatch playback commands.
+
+Key runtime assumptions:
+- App runs on Linux with writable framebuffer device (typically `/dev/fb1`).
+- Plex sessions endpoint is reachable and includes configured player when active.
+- UI must degrade gracefully: failed network/media calls should show placeholders, not crash loop.
+"""
+
 import os
 import socket
 import sys
@@ -23,6 +36,7 @@ except Exception:
 # Environment bootstrap helpers
 def load_dotenv() -> None:
     """Load KEY=VALUE pairs from a local .env file into process environment."""
+    # Assumption: first readable candidate should win to avoid mixing partial configs.
     env_path = os.environ.get("PLEXLCD_ENV")
     if env_path:
         candidates = [env_path]
@@ -60,6 +74,7 @@ def env(name: str, default: str) -> str:
 
 
 # Runtime defaults (overridden by validated Config in validate_startup)
+# Assumption: these defaults are safe placeholders before validated config is applied.
 PLEX_SERVER = env("PLEX_SERVER", "http://plex.local:32400").rstrip("/")
 PLEX_TOKEN = env("PLEX_TOKEN", "")
 PLAYER_NAME = env("PLAYER_NAME", "Plexamp Pi Zero")
@@ -89,6 +104,9 @@ BUTTON_DEVICES = []
 CURRENT_TARGET_CLIENT_ID: Optional[str] = None
 CURRENT_PLAYER_ADDRESS: Optional[str] = None
 CURRENT_PLAYER_PORT: int = 32500
+CURRENT_PLAYBACK_STATE: str = "unknown"
+TOAST_TEXT: Optional[str] = None
+TOAST_UNTIL_TS: float = 0.0
 COMMAND_COUNTER = 1
 REFRESH_EVENT = threading.Event()
 
@@ -120,6 +138,8 @@ FONT_PATH_SYMBOLS = first_existing_font(
 
 
 def log_message(component: str, message: str, *, level: str = "INFO", stderr: bool = False) -> None:
+    """Small logging shim used across modules to keep output format consistent."""
+
     stream = sys.stderr if stderr else sys.stdout
     print(f"[{component}] [{level}] {message}", file=stream, flush=True)
 
@@ -158,9 +178,34 @@ FONT_LABEL = load_font(FONT_PATH_SYMBOLS, 12)
 FONT_WEATHER_ICON = load_font(FONT_PATH_SYMBOLS, 22)
 
 
+def format_ms(ms: Optional[int]) -> str:
+    if ms is None or ms < 0:
+        return "--:--"
+    total_sec = ms // 1000
+    return f"{total_sec // 60}:{total_sec % 60:02d}"
+
+
+def draw_toast(img: Image.Image) -> Image.Image:
+    if not TOAST_TEXT or time.time() > TOAST_UNTIL_TS:
+        return img
+
+    base = img.convert("RGBA")
+    overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
+    od = ImageDraw.Draw(overlay)
+    bbox = od.textbbox((0, 0), TOAST_TEXT, font=FONT_SMALL)
+    tw = bbox[2] - bbox[0]
+    th = bbox[3] - bbox[1]
+    px = max(0, (WIDTH - tw) // 2 - 8)
+    py = 4
+    od.rounded_rectangle((px, py, px + tw + 16, py + th + 10), radius=6, fill=(0, 0, 0, 150))
+    od.text((px + 8, py + 5), TOAST_TEXT, font=FONT_SMALL, fill="#ffffff")
+    return Image.alpha_composite(base, overlay).convert("RGB")
+
+
 # Startup validation and config application
 def validate_startup():
     """Parse and validate configuration at startup, then apply runtime globals."""
+    # Assumption: validation must fail-fast before any framebuffer/network side effects.
     cfg, errors = Config.from_env(button_available=Button is not None)
     if errors:
         log_message("startup", "Configuration errors:", level="ERROR", stderr=True)
@@ -199,6 +244,8 @@ def validate_startup():
 
 
 def next_command_id() -> int:
+    """Return monotonically increasing command id for Plex playback endpoints."""
+
     global COMMAND_COUNTER
     COMMAND_COUNTER += 1
     return COMMAND_COUNTER
@@ -206,6 +253,8 @@ def next_command_id() -> int:
 
 def send_plex_playback_command(action: str):
     """Send a playback command to the active Plexamp player."""
+    # Assumption: toasts reflect the intended action immediately after accepted request.
+    global TOAST_TEXT, TOAST_UNTIL_TS
     cmd_id = next_command_id()
     sent_ok = send_playback_command(
         action=action,
@@ -223,11 +272,21 @@ def send_plex_playback_command(action: str):
         log_error=lambda msg: log_message("buttons", msg, level="ERROR", stderr=True),
     )
     if sent_ok:
+        if action == "next":
+            TOAST_TEXT = "Skipped"
+        elif action == "stop":
+            TOAST_TEXT = "Stopped"
+        elif action == "play_pause":
+            TOAST_TEXT = "Paused" if CURRENT_PLAYBACK_STATE == "playing" else "Playing"
+        else:
+            TOAST_TEXT = "Command sent"
+        TOAST_UNTIL_TS = time.time() + 1.0
         REFRESH_EVENT.set()
 
 
 def setup_gpio_buttons():
     """Initialize GPIO button callbacks when hardware buttons are enabled."""
+    # Assumption: gpiozero handles debouncing; callback should stay lightweight.
     global BUTTON_DEVICES
     if not BUTTONS_ENABLED:
         return
@@ -278,6 +337,8 @@ def draw_button_labels(
     is_playing: bool = False,
     visible_actions: Optional[tuple[str, ...]] = None,
 ) -> Image.Image:
+    """Draw small button hint icons based on visible action set."""
+
     if not BUTTONS_ENABLED:
         return img
 
@@ -343,6 +404,8 @@ def apply_display_shift(img: Image.Image) -> Image.Image:
 
 
 def rgb888_to_rgb565_bytes(img: Image.Image) -> bytes:
+    """Convert RGB888 PIL image to little-endian RGB565 byte buffer for framebuffer."""
+
     if img.mode != "RGB":
         img = img.convert("RGB")
     pixels = img.load()
@@ -364,6 +427,8 @@ def rgb888_to_rgb565_bytes(img: Image.Image) -> bytes:
 
 
 def write_framebuffer(img: Image.Image):
+    """Write final rendered frame to framebuffer device."""
+
     try:
         raw = rgb888_to_rgb565_bytes(apply_display_shift(img))
         with open(FB_DEVICE, "wb", buffering=0) as fb:
@@ -382,6 +447,8 @@ def render_idle(
     playback_status: Optional[str] = None,
     playback_state: Optional[str] = None,
 ) -> Image.Image:
+    """Render idle screen with weather card and optional paused-status/footer controls."""
+
     img = Image.new("RGB", (WIDTH, HEIGHT), "black")
     draw = ImageDraw.Draw(img)
     now = datetime.now(ZoneInfo(TIMEZONE))
@@ -395,7 +462,20 @@ def render_idle(
         label = WEATHER_CODES.get(weather.weather_code, f"Code {weather.weather_code}")
         text_center(draw, 126, symbol, FONT_WEATHER_ICON, fill="white")
         text_center(draw, 152, temp, FONT_WEATHER, fill="white")
-        text_center(draw, 182, label, FONT_SMALL, fill="#cfcfcf")
+        text_center(draw, 178, label, FONT_SMALL, fill="#cfcfcf")
+
+        details = []
+        if weather.humidity_pct is not None:
+            details.append(f"H {weather.humidity_pct}%")
+        if weather.temp_min_c is not None and weather.temp_max_c is not None:
+            details.append(f"L/H {round(weather.temp_min_c):.0f}/{round(weather.temp_max_c):.0f}C")
+        if details:
+            text_center(draw, 196, "  ".join(details), FONT_LABEL, fill="#bfbfbf")
+
+        if weather.next_hour_weather_code is not None and weather.next_hour_temp_c is not None:
+            next_label = WEATHER_CODES.get(weather.next_hour_weather_code, "Weather")
+            next_text = f"Next hr: {next_label} {round(weather.next_hour_temp_c):.0f}C"
+            text_center(draw, 210, next_text, FONT_LABEL, fill="#a8a8a8")
     else:
         text_center(draw, 152, "Weather unavailable", FONT_SMALL, fill="#888888")
 
@@ -406,16 +486,19 @@ def render_idle(
     if playback_state == "paused":
         idle_actions = ("play_pause", "stop", "next")
 
-    return draw_button_labels(
+    img = draw_button_labels(
         img,
         0,
         fill="#8f8f8f",
         is_playing=False,
         visible_actions=idle_actions,
     )
+    return draw_toast(img)
 
 
 def render_now_playing(cover: Image.Image, track: PlexTrack) -> Image.Image:
+    """Render now-playing screen with compact metadata and progress strip."""
+
     bg = fit_cover(cover, WIDTH, HEIGHT)
     overlay = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
     od = ImageDraw.Draw(overlay)
@@ -429,12 +512,30 @@ def render_now_playing(cover: Image.Image, track: PlexTrack) -> Image.Image:
     artist = truncate(draw, track.artist, FONT_META, text_max_width)
     draw.text((text_x, HEIGHT - 74), title, font=FONT_TRACK, fill="white")
     draw.text((text_x, HEIGHT - 46), artist, font=FONT_META, fill="#dddddd")
-    return draw_button_labels(
+
+    if track.duration_ms and track.duration_ms > 0:
+        elapsed = max(0, min(track.elapsed_ms or 0, track.duration_ms))
+        bar_x = text_x
+        bar_y = HEIGHT - 10
+        bar_w = WIDTH - text_x - 8
+        bar_h = 2
+        fill_w = int((elapsed / track.duration_ms) * bar_w)
+        draw.rectangle((bar_x, bar_y, bar_x + bar_w, bar_y + bar_h), fill="#4a4a4a")
+        draw.rectangle((bar_x, bar_y, bar_x + fill_w, bar_y + bar_h), fill="#f2f2f2")
+        draw.text(
+            (bar_x, bar_y - 12),
+            f"{format_ms(elapsed)} / {format_ms(track.duration_ms)}",
+            font=FONT_LABEL,
+            fill="#d6d6d6",
+        )
+
+    img = draw_button_labels(
         composed,
         0,
         is_playing=True,
         visible_actions=("play_pause", "stop", "next"),
     )
+    return draw_toast(img)
 
 
 def try_write_framebuffer(img: Image.Image, *, context: str) -> bool:
@@ -456,6 +557,8 @@ def write_fallback_placeholder(text: str, *, context: str) -> None:
 
 # Main loop orchestration helpers
 def refresh_weather_if_due(state: LoopState, now_ts: float) -> None:
+    """Refresh cached weather on configured interval only."""
+
     if now_ts - state.last_weather_fetch > WEATHER_REFRESH_SECONDS:
         state.last_weather = fetch_weather(
             latitude=LATITUDE,
@@ -469,14 +572,18 @@ def refresh_weather_if_due(state: LoopState, now_ts: float) -> None:
 
 
 def update_current_player_context(track: Optional[PlexTrack]) -> None:
-    global CURRENT_TARGET_CLIENT_ID, CURRENT_PLAYER_ADDRESS, CURRENT_PLAYER_PORT
+    """Update globals used by button handlers from latest track context."""
+
+    global CURRENT_TARGET_CLIENT_ID, CURRENT_PLAYER_ADDRESS, CURRENT_PLAYER_PORT, CURRENT_PLAYBACK_STATE
     CURRENT_TARGET_CLIENT_ID = track.target_client_identifier if track else None
     CURRENT_PLAYER_ADDRESS = track.player_address if track else None
     CURRENT_PLAYER_PORT = track.player_port if track else 32500
+    CURRENT_PLAYBACK_STATE = track.state if track else "unknown"
 
 
 def render_playing_frame(state: LoopState, track: PlexTrack, now_ts: float) -> None:
     """Render now-playing state, refreshing cover art only when needed."""
+    # Assumption: cover art is expensive enough to cache between loop cycles.
     needs_refresh = (
         track.thumb_path != state.last_thumb_path
         or track.title != state.last_track_title
@@ -535,6 +642,7 @@ def render_playing_frame(state: LoopState, track: PlexTrack, now_ts: float) -> N
 
 def render_idle_frame(state: LoopState, track: Optional[PlexTrack]) -> None:
     """Render idle/paused/stopped screen when minute or state changes."""
+    # Assumption: minute-level redraw cadence is sufficient for clock in idle mode.
     minute_key = datetime.now(ZoneInfo(TIMEZONE)).strftime("%Y-%m-%d %H:%M")
     idle_state = track.state if track else "unknown"
     status_text = playback_status_text(idle_state) if idle_state == "paused" else None
@@ -559,6 +667,7 @@ def render_idle_frame(state: LoopState, track: Optional[PlexTrack]) -> None:
 
 def wait_for_next_cycle() -> None:
     """Wait for poll interval or immediate wake-up triggered by button commands."""
+    # Assumption: small post-command delay gives Plex state time to settle before next poll.
     REFRESH_EVENT.wait(timeout=POLL_SECONDS)
     if REFRESH_EVENT.is_set():
         REFRESH_EVENT.clear()
@@ -568,6 +677,7 @@ def wait_for_next_cycle() -> None:
 # Application entrypoint
 def main():
     """Main app loop: fetch state, render frame, and sleep/wake for next cycle."""
+    # Assumption: top-level loop must be resilient; all recoverable errors are logged and retried.
     validate_startup()
     setup_gpio_buttons()
 

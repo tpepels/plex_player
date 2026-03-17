@@ -1,3 +1,11 @@
+"""Configuration parsing and validation for Plex LCD.
+
+Design assumptions:
+- Environment variables are the single configuration source at runtime.
+- Parsing is permissive (falls back to defaults), while validation reports all issues at once.
+- This module performs no side effects beyond reading environment and local filesystem checks.
+"""
+
 import os
 from dataclasses import dataclass
 from zoneinfo import ZoneInfo
@@ -32,6 +40,14 @@ class Config:
 
     @classmethod
     def from_env(cls, *, button_available: bool) -> tuple["Config", list[str]]:
+        """Build and validate config from process environment.
+
+        Assumptions:
+        - Defaults are chosen for a Raspberry Pi + 320x240 framebuffer setup.
+        - Validation errors are accumulated to improve setup UX.
+        - `button_available` is injected by caller so this module stays hardware/library agnostic.
+        """
+
         errors: list[str] = []
 
         def getenv(name: str, default: str) -> str:
