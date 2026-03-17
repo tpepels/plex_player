@@ -121,6 +121,23 @@ class PlexTrack:
     state: str
 
 
+def normalize_playback_state(item: dict) -> str:
+    """Normalize Plex session/player state to a simple playing vs idle model."""
+    player = item.get("Player", {})
+    session = item.get("Session", {})
+
+    raw_states = [
+        str(player.get("state") or "").strip().lower(),
+        str(session.get("state") or "").strip().lower(),
+    ]
+
+    if "playing" in raw_states:
+        return "playing"
+    if any(state in {"paused", "stopped", "buffering", "idle", "none"} for state in raw_states):
+        return "idle"
+    return raw_states[0] or raw_states[1] or "unknown"
+
+
 def load_font(path: str, size: int):
     try:
         return ImageFont.truetype(path, size=size)
@@ -339,7 +356,7 @@ def find_player_track(data: dict) -> Optional[PlexTrack]:
                 artist=item.get("grandparentTitle", "Unknown Artist"),
                 album=item.get("parentTitle", "Unknown Album"),
                 thumb_path=thumb,
-                state=player.get("state", "unknown"),
+                state=normalize_playback_state(item),
             )
     return None
 
