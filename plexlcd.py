@@ -489,7 +489,7 @@ def render_idle(
             gap = 6
             row_w = prefix_w + gap + icon_w + gap + temp_w
             row_x = max(0, (WIDTH - row_w) // 2)
-            row_y = 194
+            row_y = 198
             row_h = max(prefix_h, icon_h, temp_h)
             prefix_y = row_y + (row_h - prefix_h) // 2 - prefix_bbox[1]
             icon_y = row_y + (row_h - icon_h) // 2 - icon_bbox[1]
@@ -747,10 +747,12 @@ def render_idle_frame(state: LoopState, track: Optional[PlexTrack]) -> None:
     write_fallback_placeholder("Display Error", context="idle render")
 
 
-def wait_for_next_cycle() -> None:
+def wait_for_next_cycle(state: LoopState) -> None:
     """Wait for poll interval or immediate wake-up triggered by button commands."""
     # Assumption: small post-command delay gives Plex state time to settle before next poll.
     timeout = POLL_SECONDS
+    if state.last_player_state == "playing":
+        timeout = min(timeout, max(1, PROGRESS_UPDATE_SECONDS))
     if toast_is_visible():
         remaining = max(0.0, RUNTIME_STATE.toast_until_ts - time.monotonic())
         timeout = min(timeout, remaining)
@@ -814,7 +816,7 @@ def main():
             log_exception("main", "Unhandled loop error", exc)
             time.sleep(5)
 
-        wait_for_next_cycle()
+        wait_for_next_cycle(state)
 
 
 if __name__ == "__main__":
