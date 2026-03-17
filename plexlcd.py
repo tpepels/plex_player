@@ -22,8 +22,9 @@ from typing import Optional
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 from config import Config
-from models import LoopState, PlexTrack, RuntimeState, ScreenMode, WeatherInfo
+from models import LoopState, PlaybackSnapshot, PlexTrack, RuntimeState, TransitionMode, WeatherInfo
 from plex_service import fetch_cover, fetch_sessions_json, find_player_track, playback_status_text, send_playback_command
+from transition_rules import apply_button_rules, compute_display_elapsed_ms, resolve_transition
 from weather_service import WEATHER_CODES, fetch_weather, get_weather_symbol
 from zoneinfo import ZoneInfo
 
@@ -281,15 +282,13 @@ def send_plex_playback_command(action: str):
         log_error=lambda msg: log_message("buttons", msg, level="ERROR", stderr=True),
     )
     if sent_ok:
-        if action == "next":
-            RUNTIME_STATE.toast_text = "Skipped"
-        elif action == "stop":
-            RUNTIME_STATE.toast_text = "Stopped"
-        elif action == "play_pause":
-            RUNTIME_STATE.toast_text = "Paused" if RUNTIME_STATE.current_playback_state == "playing" else "Playing"
-        else:
-            RUNTIME_STATE.toast_text = "Command sent"
-        RUNTIME_STATE.toast_until_ts = time.monotonic() + TOAST_DURATION_SECONDS
+        apply_button_rules(
+            RUNTIME_STATE,
+            action,
+            now_ts=time.monotonic(),
+            toast_duration_seconds=TOAST_DURATION_SECONDS,
+            stop_force_idle_seconds=max(2.0, NO_TRACK_GRACE_SECONDS),
+        )
         REFRESH_EVENT.set()
 
 
@@ -517,7 +516,7 @@ def render_idle(
     return draw_toast(img)
 
 
-def render_now_playing(cover: Image.Image, track: PlexTrack) -> Image.Image:
+def render_now_playing(cover: Image.Image, track: PlexTrack, elapsed_ms: Optional[int] = None) -> Image.Image:
     """Render now-playing screen with compact metadata and progress strip."""
 
     bg = fit_cover(cover, WIDTH, HEIGHT)
@@ -535,7 +534,8 @@ def render_now_playing(cover: Image.Image, track: PlexTrack) -> Image.Image:
     draw.text((text_x, HEIGHT - 58), artist, font=FONT_META, fill="#dddddd")
 
     if track.duration_ms and track.duration_ms > 0:
-        elapsed = max(0, min(track.elapsed_ms or 0, track.duration_ms))
+        raw_elapsed = elapsed_ms if elapsed_ms is not None else (track.elapsed_ms or 0)
+        elapsed = max(0, min(raw_elapsed, track.duration_ms))
         bar_x = text_x
         bar_y = HEIGHT - 12
         bar_w = WIDTH - text_x - 8
@@ -557,35 +557,6 @@ def render_now_playing(cover: Image.Image, track: PlexTrack) -> Image.Image:
         visible_actions=("play_pause", "stop", "next"),
     )
     return draw_toast(img)
-
-
-def compute_display_elapsed_ms(state: LoopState, track: PlexTrack, now_ts: float) -> Optional[int]:
-    """Estimate elapsed playback time between coarse Plex metadata updates."""
-
-    # Reset anchors when track identity changes.
-    if track.title != state.last_track_title:
-        state.last_reported_elapsed_ms = None
-        state.elapsed_anchor_ms = None
-        state.elapsed_anchor_ts = now_ts
-
-    reported_ms = track.elapsed_ms
-    if reported_ms is not None:
-        # Re-anchor whenever Plex advances or seeks/jumps.
-        if state.last_reported_elapsed_ms is None:
-            state.elapsed_anchor_ms = reported_ms
-            state.elapsed_anchor_ts = now_ts
-        elif reported_ms != state.last_reported_elapsed_ms:
-            state.elapsed_anchor_ms = reported_ms
-            state.elapsed_anchor_ts = now_ts
-        state.last_reported_elapsed_ms = reported_ms
-
-    if state.elapsed_anchor_ms is None:
-        return reported_ms
-
-    estimated = state.elapsed_anchor_ms + int(max(0.0, now_ts - state.elapsed_anchor_ts) * 1000)
-    if track.duration_ms and track.duration_ms > 0:
-        return max(0, min(estimated, track.duration_ms))
-    return max(0, estimated)
 
 
 def try_write_framebuffer(img: Image.Image, *, context: str) -> bool:
@@ -684,19 +655,10 @@ def render_playing_frame(state: LoopState, track: PlexTrack, now_ts: float) -> N
         )
 
     if state.cached_cover:
-        track_for_render = PlexTrack(
-            title=track.title,
-            artist=track.artist,
-            album=track.album,
-            thumb_path=track.thumb_path,
-            state=track.state,
-            target_client_identifier=track.target_client_identifier,
-            player_address=track.player_address,
-            player_port=track.player_port,
-            elapsed_ms=display_elapsed_ms,
-            duration_ms=track.duration_ms,
-        )
-        if try_write_framebuffer(render_now_playing(state.cached_cover, track_for_render), context="now-playing render"):
+        if try_write_framebuffer(
+            render_now_playing(state.cached_cover, track, elapsed_ms=display_elapsed_ms),
+            context="now-playing render",
+        ):
             state.last_thumb_path = track.thumb_path
             state.last_track_title = track.title
             state.last_player_state = "playing"
@@ -735,6 +697,7 @@ def render_idle_frame(state: LoopState, track: Optional[PlexTrack]) -> None:
         state.last_player_state = idle_state
         state.last_thumb_path = None
         state.last_track_title = None
+        state.last_track_identity = None
         state.last_elapsed_second = None
         state.last_reported_elapsed_ms = None
         state.elapsed_anchor_ms = None
@@ -762,16 +725,6 @@ def wait_for_next_cycle(state: LoopState) -> None:
         time.sleep(0.5)
 
 
-def resolve_screen_mode(state: LoopState, track: Optional[PlexTrack], now_ts: float) -> ScreenMode:
-    """Resolve the current render mode from playback/session state."""
-
-    if track and track.state == "playing":
-        return ScreenMode.PLAYING
-    if not track and state.last_player_state == "playing" and now_ts < state.no_track_grace_until_ts:
-        return ScreenMode.TRANSITION
-    return ScreenMode.IDLE
-
-
 # Application entrypoint
 def main():
     """Main app loop: fetch state, render frame, and sleep/wake for next cycle."""
@@ -795,17 +748,27 @@ def main():
             )
             track = find_player_track(sessions, PLAYER_NAME) if sessions else None
             update_current_player_context(track)
-            screen_mode = resolve_screen_mode(state, track, now_ts)
+            snapshot = PlaybackSnapshot(
+                now_ts=now_ts,
+                track=track,
+                last_player_state=state.last_player_state,
+                no_track_grace_until_ts=state.no_track_grace_until_ts,
+                force_idle_until_ts=RUNTIME_STATE.force_idle_until_ts,
+            )
+            decision = resolve_transition(snapshot, no_track_grace_seconds=NO_TRACK_GRACE_SECONDS)
 
-            if screen_mode == ScreenMode.PLAYING and track is not None:
-                # Keep a short grace window for transient session gaps during skips.
-                state.no_track_grace_until_ts = now_ts + NO_TRACK_GRACE_SECONDS
+            if decision.clear_force_idle:
+                RUNTIME_STATE.force_idle_until_ts = 0.0
+            if decision.set_no_track_grace_until_ts is not None:
+                state.no_track_grace_until_ts = decision.set_no_track_grace_until_ts
+
+            if decision.mode == TransitionMode.PLAYING and track is not None:
                 render_playing_frame(state, track, now_ts)
-            elif screen_mode == ScreenMode.TRANSITION:
+            elif decision.mode == TransitionMode.HOLD:
                 # Preserve current now-playing frame while Plex transitions between tracks.
                 pass
             else:
-                render_idle_frame(state, track)
+                render_idle_frame(state, decision.idle_track)
 
         except KeyboardInterrupt:
             raise

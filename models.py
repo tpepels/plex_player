@@ -13,11 +13,11 @@ from typing import Optional
 from PIL import Image
 
 
-class ScreenMode(str, Enum):
-    """High-level render modes used by the main loop state machine."""
+class TransitionMode(str, Enum):
+    """Valid transition outputs for render routing."""
 
     PLAYING = "playing"
-    TRANSITION = "transition"
+    HOLD = "hold"
     IDLE = "idle"
 
 
@@ -69,6 +69,7 @@ class LoopState:
     last_weather_fetch: float = 0.0
     last_thumb_path: Optional[str] = None
     last_track_title: Optional[str] = None
+    last_track_identity: Optional[str] = None
     last_player_state: Optional[str] = None
     last_idle_minute: Optional[str] = None
     last_elapsed_second: Optional[int] = None
@@ -96,4 +97,27 @@ class RuntimeState:
     current_playback_state: str = "unknown"
     toast_text: Optional[str] = None
     toast_until_ts: float = 0.0
+    force_idle_until_ts: float = 0.0
     command_counter: int = 1
+
+
+@dataclass
+class PlaybackSnapshot:
+    """Single-loop snapshot used to resolve render transitions."""
+
+    now_ts: float
+    track: Optional[PlexTrack]
+    last_player_state: Optional[str]
+    no_track_grace_until_ts: float
+    force_idle_until_ts: float
+
+
+@dataclass
+class TransitionDecision:
+    """Resolved transition output consumed by the main loop."""
+
+    mode: TransitionMode
+    reason: str
+    idle_track: Optional[PlexTrack] = None
+    set_no_track_grace_until_ts: Optional[float] = None
+    clear_force_idle: bool = False

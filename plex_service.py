@@ -109,6 +109,20 @@ def find_player_track(data: dict, player_name: str) -> Optional[PlexTrack]:
             media0 = media[0] if isinstance(media, list) and media else {}
             duration = item.get("duration") or media0.get("duration")
             view_offset = item.get("viewOffset")
+            state = normalize_playback_state(item)
+
+            # Plexamp can briefly report stale "playing" for the finished last
+            # queue item. If progress reached track end, treat it as stopped so
+            # the UI can return to idle immediately.
+            try:
+                duration_i = int(duration) if duration is not None else None
+                view_offset_i = int(view_offset) if view_offset is not None else None
+            except (TypeError, ValueError):
+                duration_i = None
+                view_offset_i = None
+            if state == "playing" and duration_i and view_offset_i is not None and view_offset_i >= duration_i:
+                state = "stopped"
+
             thumb = (
                 item.get("thumb")
                 or item.get("grandparentThumb")
@@ -120,7 +134,7 @@ def find_player_track(data: dict, player_name: str) -> Optional[PlexTrack]:
                 artist=item.get("grandparentTitle", "Unknown Artist"),
                 album=item.get("parentTitle", "Unknown Album"),
                 thumb_path=thumb,
-                state=normalize_playback_state(item),
+                state=state,
                 target_client_identifier=(
                     player.get("machineIdentifier")
                     or player.get("clientIdentifier")
@@ -128,8 +142,8 @@ def find_player_track(data: dict, player_name: str) -> Optional[PlexTrack]:
                 ),
                 player_address=player.get("address"),
                 player_port=int(player.get("port") or 32500),
-                elapsed_ms=int(view_offset) if view_offset is not None else None,
-                duration_ms=int(duration) if duration is not None else None,
+                elapsed_ms=view_offset_i,
+                duration_ms=duration_i,
             )
     return None
 
