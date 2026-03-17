@@ -2,7 +2,7 @@
 
 Show Plex/Plexamp album art on a 320x240 framebuffer display. When nothing is playing, show clock + weather.
 
-Works from any current directory. Use an absolute path to the setup script.
+Works from any current directory. The script always uses files in its own directory.
 
 ## Quick Start
 
@@ -13,7 +13,7 @@ SCRIPT="/absolute/path/to/setup_plexlcd.sh"
 chmod +x "$SCRIPT"
 ```
 
-2. Install dependencies and app files:
+2. Install dependencies:
 
 ```bash
 "$SCRIPT" install
@@ -49,18 +49,14 @@ Use [.env.example](.env.example) as a template.
 - FB_DEVICE: Usually /dev/fb1
 - WIDTH, HEIGHT: Display resolution
 
-The app loads .env automatically from:
-
-1. Path in PLEXLCD_ENV (if set)
-2. Current working directory
-3. Same directory as the Python script
+The setup script and service use `.env` from the same directory as `setup_plexlcd.sh`.
 
 ## Useful Commands
 
 ```bash
 "$SCRIPT" fb
 "$SCRIPT" help
-python3 "$HOME/plexlcd/plexlcd.py"
+python3 "$(dirname "$SCRIPT")/plexlcd.py"
 ```
 
 ## Notes

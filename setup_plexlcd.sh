@@ -2,8 +2,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-APP_DIR="${APP_DIR:-$HOME/plexlcd}"
-ENV_FILE="$APP_DIR/.env"
+APP_DIR="$SCRIPT_DIR"
+ENV_FILE="$SCRIPT_DIR/.env"
 SERVICE_FILE="/etc/systemd/system/plexlcd.service"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 
@@ -32,13 +32,12 @@ install_packages() {
     curl jq fonts-dejavu-core fbset fbi
 }
 
-copy_python_script() {
-  mkdir -p "$APP_DIR"
-  cp "$SCRIPT_DIR/plexlcd.py" "$APP_DIR/plexlcd.py"
-  if [[ -f "$SCRIPT_DIR/.env.example" ]]; then
-    cp "$SCRIPT_DIR/.env.example" "$APP_DIR/.env.example"
+prepare_local_files() {
+  if [[ ! -f "$SCRIPT_DIR/plexlcd.py" ]]; then
+    log "Missing $SCRIPT_DIR/plexlcd.py"
+    return 1
   fi
-  chmod +x "$APP_DIR/plexlcd.py"
+  chmod +x "$SCRIPT_DIR/plexlcd.py" || true
 }
 
 prompt_default() {
@@ -97,8 +96,8 @@ EOFENV
 
 test_plex() {
   if [[ ! -f "$ENV_FILE" ]]; then
-    log "No .env file yet, skipping Plex test"
-    return 0
+    log "No .env file found at $ENV_FILE, run: $(basename "$0") configure"
+    return 1
   fi
 
   # shellcheck disable=SC1090
@@ -198,7 +197,7 @@ Usage: $(basename "$0") [command]
 
 Commands:
   help            Show token/player-name instructions
-  install         Install packages and copy plexlcd.py to $APP_DIR
+  install         Install dependencies
   configure       Create or update $ENV_FILE interactively
   test            Test Plex connectivity and list players from current sessions
   fb              Show framebuffer devices
@@ -208,17 +207,26 @@ EOFUSAGE
 }
 
 main() {
-  local cmd="${1:-help}"
+  local cmd="${1:-}"
+  if [[ -z "$cmd" ]]; then
+    usage
+    printf '\nNext steps:\n'
+    printf '  1) %s configure\n' "$(basename "$0")"
+    printf '  2) %s test\n' "$(basename "$0")"
+    printf '  3) %s service\n' "$(basename "$0")"
+    return 0
+  fi
+
   case "$cmd" in
     help) show_token_help ;;
-    install) install_packages; copy_python_script ;;
+    install) install_packages; prepare_local_files ;;
     configure) write_env ;;
     test) test_plex ;;
     fb) show_framebuffers ;;
     service) install_service ;;
     all)
       install_packages
-      copy_python_script
+      prepare_local_files
       write_env
       test_plex
       show_framebuffers
