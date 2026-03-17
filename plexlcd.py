@@ -336,7 +336,7 @@ def draw_button_labels(img: Image.Image, y: int, fill: str = "#d8d8d8", is_playi
         return img
 
     draw = ImageDraw.Draw(img)
-    labels = ["▌▌" if is_playing else "▶", "■", "⏭"]
+    labels = ["▌▌" if is_playing else "▶", "■", ">>|"]
     x = 6
     y_positions = [
         HEIGHT * BUTTON_LABEL_PLAY_Y_PERCENT // 100,
