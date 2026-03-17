@@ -29,7 +29,7 @@ install_packages() {
   $SUDO apt-get update
   $SUDO apt-get install -y \
     python3 python3-pip python3-venv python3-requests python3-pil python3-gpiozero \
-    curl jq fonts-dejavu-core fbset fbi
+    curl jq fonts-dejavu-core fonts-noto-core fbset fbi
 }
 
 prepare_local_files() {
@@ -101,13 +101,14 @@ load_env_file() {
 write_env() {
   mkdir -p "$APP_DIR"
 
-  local plex_host player_name plex_token latitude longitude timezone fb_device width height poll_seconds weather_refresh display_x_shift buttons_enabled button_play_pause_pin button_stop_pin button_next_pin button_label_play_y_percent button_label_stop_y_percent button_label_next_y_percent
+  local plex_host player_name plex_token latitude longitude timezone location_name fb_device width height poll_seconds weather_refresh display_x_shift buttons_enabled button_play_pause_pin button_stop_pin button_next_pin button_label_play_y_percent button_label_stop_y_percent button_label_next_y_percent
   plex_host=$(prompt_default "Plex server URL" "http://plex.local:32400")
   player_name=$(prompt_default "Exact Plexamp player name" "Plexamp Pi Zero")
   plex_token=$(prompt_secret "Plex token")
   latitude=$(prompt_default "Latitude" "0.0000")
   longitude=$(prompt_default "Longitude" "0.0000")
   timezone=$(prompt_default "Timezone" "UTC")
+  location_name=$(prompt_default "Location name shown on display" "")
   fb_device=$(prompt_default "Framebuffer device" "/dev/fb1")
   width=$(prompt_default "Display width" "320")
   height=$(prompt_default "Display height" "240")
@@ -129,6 +130,7 @@ PLAYER_NAME="$player_name"
 LATITUDE="$latitude"
 LONGITUDE="$longitude"
 TIMEZONE="$timezone"
+LOCATION_NAME="$location_name"
 FB_DEVICE="$fb_device"
 WIDTH="$width"
 HEIGHT="$height"

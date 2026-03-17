@@ -62,6 +62,7 @@ PLAYER_NAME = env("PLAYER_NAME", "Plexamp Pi Zero")
 LATITUDE_RAW = env("LATITUDE", "0.0000")
 LONGITUDE_RAW = env("LONGITUDE", "0.0000")
 TIMEZONE = env("TIMEZONE", "UTC")
+LOCATION_NAME = env("LOCATION_NAME", "").strip()
 FB_DEVICE = env("FB_DEVICE", "/dev/fb1")
 WIDTH_RAW = env("WIDTH", "320")
 HEIGHT_RAW = env("HEIGHT", "240")
@@ -102,8 +103,29 @@ CURRENT_PLAYER_PORT: int = 32500
 COMMAND_COUNTER = 1
 REFRESH_EVENT = __import__('threading').Event()
 
-FONT_PATH_REGULAR = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-FONT_PATH_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+def first_existing_font(*candidates: str) -> str:
+    for path in candidates:
+        if path and os.path.isfile(path):
+            return path
+    return ""
+
+
+FONT_PATH_REGULAR = first_existing_font(
+    env("FONT_PATH_REGULAR", ""),
+    "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+)
+FONT_PATH_BOLD = first_existing_font(
+    env("FONT_PATH_BOLD", ""),
+    "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+)
+FONT_PATH_SYMBOLS = first_existing_font(
+    env("FONT_PATH_SYMBOLS", ""),
+    "/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSansSymbols-Regular.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+)
 
 
 WEATHER_CODES = {
@@ -133,6 +155,33 @@ WEATHER_CODES = {
     99: "Heavy hail",
 }
 
+WEATHER_SYMBOLS = {
+    0: ("☀", "☾"),
+    1: ("🌤", "☾"),
+    2: ("⛅", "☁"),
+    3: ("☁", "☁"),
+    45: ("🌫", "🌫"),
+    48: ("🌫", "🌫"),
+    51: ("🌦", "🌧"),
+    53: ("🌦", "🌧"),
+    55: ("🌧", "🌧"),
+    61: ("🌦", "🌧"),
+    63: ("🌧", "🌧"),
+    65: ("🌧", "🌧"),
+    71: ("🌨", "🌨"),
+    73: ("🌨", "🌨"),
+    75: ("❄", "❄"),
+    77: ("❄", "❄"),
+    80: ("🌦", "🌧"),
+    81: ("🌧", "🌧"),
+    82: ("⛈", "⛈"),
+    85: ("🌨", "🌨"),
+    86: ("❄", "❄"),
+    95: ("⛈", "⛈"),
+    96: ("⛈", "⛈"),
+    99: ("⛈", "⛈"),
+}
+
 
 @dataclass
 class WeatherInfo:
@@ -154,7 +203,7 @@ class PlexTrack:
 
 
 def normalize_playback_state(item: dict) -> str:
-    """Normalize Plex session/player state to a simple playing vs idle model."""
+    """Normalize Plex session/player state with enough detail for UI text."""
     player = item.get("Player", {})
     session = item.get("Session", {})
 
@@ -165,9 +214,38 @@ def normalize_playback_state(item: dict) -> str:
 
     if "playing" in raw_states:
         return "playing"
-    if any(state in {"paused", "stopped", "buffering", "idle", "none"} for state in raw_states):
-        return "idle"
-    return raw_states[0] or raw_states[1] or "unknown"
+    for state in ("paused", "stopped", "buffering", "idle"):
+        if state in raw_states:
+            return state
+    for state in raw_states:
+        if state and state != "none":
+            return state
+    return "unknown"
+
+
+def playback_status_text(state: str) -> str:
+    mapping = {
+        "playing": "Playing",
+        "paused": "Paused",
+        "stopped": "Stopped",
+        "buffering": "Buffering",
+        "idle": "Stopped",
+        "unknown": "Stopped",
+    }
+    return mapping.get(state, state.capitalize() if state else "Stopped")
+
+
+def get_weather_symbol(weather_code: int, is_day: int) -> str:
+    day_symbol, night_symbol = WEATHER_SYMBOLS.get(weather_code, ("?", "?"))
+    return day_symbol if is_day else night_symbol
+
+
+def get_location_label() -> str:
+    if LOCATION_NAME:
+        return LOCATION_NAME
+    if "/" in TIMEZONE:
+        return TIMEZONE.split("/", 1)[1].replace("_", " ")
+    return TIMEZONE.replace("_", " ")
 
 
 def load_font(path: str, size: int):
@@ -182,7 +260,8 @@ FONT_WEATHER = load_font(FONT_PATH_REGULAR, 24)
 FONT_SMALL = load_font(FONT_PATH_REGULAR, 18)
 FONT_TRACK = load_font(FONT_PATH_BOLD, 18)
 FONT_META = load_font(FONT_PATH_REGULAR, 18)
-FONT_LABEL = load_font(FONT_PATH_REGULAR, 12)
+FONT_LABEL = load_font(FONT_PATH_SYMBOLS, 12)
+FONT_WEATHER_ICON = load_font(FONT_PATH_SYMBOLS, 22)
 
 
 def validate_startup():
@@ -285,7 +364,7 @@ def send_plex_playback_command(action: str):
         base_url = f"http://{player_addr}:{player_port}"
     else:
         base_url = PLEX_SERVER
-        print(f"[buttons] WARNING: no player address known, falling back to server URL", file=sys.stderr, flush=True)
+        print("[buttons] WARNING: no player address known, falling back to server URL", file=sys.stderr, flush=True)
 
     url = f"{base_url}/player/playback/{endpoint}"
     cmd_id = next_command_id()
@@ -360,7 +439,7 @@ def draw_button_labels(img: Image.Image, y: int, fill: str = "#d8d8d8", is_playi
     if not BUTTONS_ENABLED:
         return img
 
-    labels = ["▌▌" if is_playing else "▶", "■", ">>|"]
+    labels = ["▌▌" if is_playing else "▶", "■", "⏭"]
     x = 6
     y_positions = [
         HEIGHT * BUTTON_LABEL_PLAY_Y_PERCENT // 100,
@@ -572,20 +651,24 @@ def fetch_plex_cover(thumb_path: str) -> Optional[Image.Image]:
     return None
 
 
-def render_idle(weather: Optional[WeatherInfo]) -> Image.Image:
+def render_idle(weather: Optional[WeatherInfo], playback_status: str = "Stopped") -> Image.Image:
     img = Image.new("RGB", (WIDTH, HEIGHT), "black")
     draw = ImageDraw.Draw(img)
     now = datetime.now(ZoneInfo(TIMEZONE))
-    text_center(draw, 34, now.strftime("%H:%M"), FONT_TIME, fill="white")
-    text_center(draw, 100, now.strftime("%a %d %b"), FONT_SMALL, fill="#cfcfcf")
+    text_center(draw, 26, now.strftime("%H:%M"), FONT_TIME, fill="white")
+    text_center(draw, 86, now.strftime("%a %d %b"), FONT_SMALL, fill="#cfcfcf")
+    text_center(draw, 108, get_location_label(), FONT_SMALL, fill="#9f9f9f")
 
     if weather:
+        symbol = get_weather_symbol(weather.weather_code, weather.is_day)
         temp = f"{round(weather.temp_c):.0f}°C"
         label = WEATHER_CODES.get(weather.weather_code, f"Code {weather.weather_code}")
-        text_center(draw, 150, temp, FONT_WEATHER, fill="white")
-        text_center(draw, 182, label, FONT_SMALL, fill="#cfcfcf")
+        text_center(draw, 138, symbol, FONT_WEATHER_ICON, fill="white")
+        text_center(draw, 164, temp, FONT_WEATHER, fill="white")
+        text_center(draw, 194, label, FONT_SMALL, fill="#cfcfcf")
     else:
-        text_center(draw, 165, "Weather unavailable", FONT_SMALL, fill="#888888")
+        text_center(draw, 164, "Weather unavailable", FONT_SMALL, fill="#888888")
+    text_center(draw, 218, f"Status: {playback_status}", FONT_SMALL, fill="#9f9f9f")
     return draw_button_labels(img, 0, fill="#8f8f8f", is_playing=False)
 
 
@@ -689,11 +772,13 @@ def main():
             # Player is paused, stopped, or no track found
             else:
                 minute_key = datetime.now(ZoneInfo(TIMEZONE)).strftime("%Y-%m-%d %H:%M")
-                if minute_key != last_idle_minute or last_player_state == "playing":
+                idle_state = track.state if track else "stopped"
+                status_text = playback_status_text(idle_state)
+                if minute_key != last_idle_minute or last_player_state != idle_state:
                     try:
-                        write_framebuffer(render_idle(last_weather))
+                        write_framebuffer(render_idle(last_weather, playback_status=status_text))
                         last_idle_minute = minute_key
-                        last_player_state = "idle"
+                        last_player_state = idle_state
                         last_thumb_path = None
                         last_track_title = None
                         cached_cover = None
