@@ -183,14 +183,23 @@ def format_ms(ms: Optional[int]) -> str:
     return f"{total_sec // 60}:{total_sec % 60:02d}"
 
 
+def toast_is_visible(now_ts: Optional[float] = None) -> bool:
+    if now_ts is None:
+        now_ts = time.monotonic()
+    return bool(RUNTIME_STATE.toast_text and now_ts <= RUNTIME_STATE.toast_until_ts)
+
+
 def draw_toast(img: Image.Image) -> Image.Image:
-    if not RUNTIME_STATE.toast_text or time.monotonic() > RUNTIME_STATE.toast_until_ts:
+    if not toast_is_visible():
+        return img
+    text = RUNTIME_STATE.toast_text
+    if not text:
         return img
 
     base = img.convert("RGBA")
     overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
     od = ImageDraw.Draw(overlay)
-    bbox = od.textbbox((0, 0), RUNTIME_STATE.toast_text, font=FONT_TOAST)
+    bbox = od.textbbox((0, 0), text, font=FONT_TOAST)
     tw = bbox[2] - bbox[0]
     th = bbox[3] - bbox[1]
     pad_x = 6
@@ -198,7 +207,7 @@ def draw_toast(img: Image.Image) -> Image.Image:
     px = max(0, (WIDTH - (tw + pad_x * 2)) // 2)
     py = 3
     od.rounded_rectangle((px, py, px + tw + pad_x * 2, py + th + pad_y * 2), radius=5, fill=(0, 0, 0, 150))
-    od.text((px + pad_x - bbox[0], py + pad_y - bbox[1]), RUNTIME_STATE.toast_text, font=FONT_TOAST, fill="#ffffff")
+    od.text((px + pad_x - bbox[0], py + pad_y - bbox[1] + 1), text, font=FONT_TOAST, fill="#ffffff")
     return Image.alpha_composite(base, overlay).convert("RGB")
 
 
@@ -458,20 +467,26 @@ def render_idle(
         symbol = get_weather_symbol(weather.weather_code, weather.is_day)
         temp = f"{round(weather.temp_c):.0f}°C"
         label = WEATHER_CODES.get(weather.weather_code, f"Code {weather.weather_code}")
-        text_center(draw, 126, symbol, FONT_WEATHER_ICON, fill="white")
-        text_center(draw, 152, temp, FONT_WEATHER, fill="white")
-        text_center(draw, 178, label, FONT_SMALL, fill="#cfcfcf")
+        text_center(draw, 122, symbol, FONT_WEATHER_ICON, fill="white")
+        text_center(draw, 148, temp, FONT_WEATHER, fill="white")
+        text_center(draw, 172, label, FONT_SMALL, fill="#cfcfcf")
 
         if weather.next_hour_weather_code is not None and weather.next_hour_temp_c is not None:
             next_symbol = get_weather_symbol(weather.next_hour_weather_code, weather.is_day)
-            next_text = f"Next: {next_symbol} {round(weather.next_hour_temp_c):.0f}C"
-            text_center(draw, 206, next_text, FONT_SMALL, fill="#b8b8b8")
+            next_temp_text = f"{round(weather.next_hour_temp_c):.0f}C"
+            icon_w = int(draw.textlength(next_symbol, font=FONT_WEATHER_ICON))
+            temp_w = int(draw.textlength(next_temp_text, font=FONT_SMALL))
+            gap = 6
+            row_w = icon_w + gap + temp_w
+            row_x = max(0, (WIDTH - row_w) // 2)
+            row_y = 194
+            draw.text((row_x, row_y), next_symbol, font=FONT_WEATHER_ICON, fill="#b8b8b8")
+            draw.text((row_x + icon_w + gap, row_y + 2), next_temp_text, font=FONT_SMALL, fill="#b8b8b8")
     else:
         text_center(draw, 152, "Weather unavailable", FONT_SMALL, fill="#888888")
 
     if playback_status:
-        status_y = 224 if weather else 204
-        text_center(draw, status_y, f"Status: {playback_status}", FONT_PROGRESS, fill="#9f9f9f")
+        text_center(draw, 2, playback_status, FONT_PROGRESS, fill="#9f9f9f")
 
     idle_actions: tuple[str, ...] = ()
     if playback_state == "paused":
@@ -501,13 +516,13 @@ def render_now_playing(cover: Image.Image, track: PlexTrack) -> Image.Image:
     text_max_width = WIDTH - text_x - 8
     title = truncate(draw, track.title, FONT_TRACK, text_max_width)
     artist = truncate(draw, track.artist, FONT_META, text_max_width)
-    draw.text((text_x, HEIGHT - 80), title, font=FONT_TRACK, fill="white")
-    draw.text((text_x, HEIGHT - 52), artist, font=FONT_META, fill="#dddddd")
+    draw.text((text_x, HEIGHT - 86), title, font=FONT_TRACK, fill="white")
+    draw.text((text_x, HEIGHT - 58), artist, font=FONT_META, fill="#dddddd")
 
     if track.duration_ms and track.duration_ms > 0:
         elapsed = max(0, min(track.elapsed_ms or 0, track.duration_ms))
         bar_x = text_x
-        bar_y = HEIGHT - 14
+        bar_y = HEIGHT - 12
         bar_w = WIDTH - text_x - 8
         bar_h = 2
         fill_w = int((elapsed / track.duration_ms) * bar_w)
@@ -515,7 +530,7 @@ def render_now_playing(cover: Image.Image, track: PlexTrack) -> Image.Image:
         draw.rectangle((bar_x, bar_y, bar_x + fill_w, bar_y + bar_h), fill="#f2f2f2")
         elapsed_text = format_ms(elapsed)
         total_text = format_ms(track.duration_ms)
-        time_y = bar_y - 14
+        time_y = bar_y - 16
         draw.text((bar_x, time_y), elapsed_text, font=FONT_PROGRESS, fill="#d6d6d6")
         total_w = int(draw.textlength(total_text, font=FONT_PROGRESS))
         draw.text((bar_x + bar_w - total_w, time_y), total_text, font=FONT_PROGRESS, fill="#d6d6d6")
@@ -585,6 +600,8 @@ def render_playing_frame(state: LoopState, track: PlexTrack, now_ts: float) -> N
         else None
     )
     progress_changed = progress_bucket != state.last_elapsed_second
+    toast_visible = toast_is_visible(now_ts)
+    toast_visibility_changed = toast_visible != state.last_toast_visible
     needs_retry = (
         not state.cached_cover
         and track.thumb_path == state.last_thumb_path
@@ -597,12 +614,13 @@ def render_playing_frame(state: LoopState, track: PlexTrack, now_ts: float) -> N
             f"title={track.title!r} last_title={state.last_track_title!r} "
             f"thumb_changed={track.thumb_path != state.last_thumb_path} "
             f"progress_changed={progress_changed} "
+            f"toast_changed={toast_visibility_changed} "
             f"needs_refresh={needs_refresh} needs_retry={needs_retry} "
             f"have_cover={state.cached_cover is not None}"
         ),
     )
 
-    if not (needs_refresh or needs_retry or progress_changed):
+    if not (needs_refresh or needs_retry or progress_changed or toast_visibility_changed):
         return
 
     if track.thumb_path != state.last_thumb_path:
@@ -626,6 +644,7 @@ def render_playing_frame(state: LoopState, track: PlexTrack, now_ts: float) -> N
             state.last_track_title = track.title
             state.last_player_state = "playing"
             state.last_elapsed_second = progress_bucket
+            state.last_toast_visible = toast_visible
             state.next_cover_retry_ts = 0.0
             return
         write_fallback_placeholder("Render Error", context="now-playing render")
@@ -637,6 +656,7 @@ def render_playing_frame(state: LoopState, track: PlexTrack, now_ts: float) -> N
         state.last_track_title = track.title
         state.last_player_state = "playing"
         state.last_elapsed_second = progress_bucket
+        state.last_toast_visible = toast_visible
 
 
 def render_idle_frame(state: LoopState, track: Optional[PlexTrack]) -> None:
@@ -645,8 +665,9 @@ def render_idle_frame(state: LoopState, track: Optional[PlexTrack]) -> None:
     minute_key = datetime.now(ZoneInfo(TIMEZONE)).strftime("%Y-%m-%d %H:%M")
     idle_state = track.state if track else "unknown"
     status_text = playback_status_text(idle_state) if idle_state == "paused" else None
+    toast_visible = toast_is_visible()
 
-    if minute_key == state.last_idle_minute and state.last_player_state == idle_state:
+    if minute_key == state.last_idle_minute and state.last_player_state == idle_state and toast_visible == state.last_toast_visible:
         return
 
     if try_write_framebuffer(
@@ -658,6 +679,7 @@ def render_idle_frame(state: LoopState, track: Optional[PlexTrack]) -> None:
         state.last_thumb_path = None
         state.last_track_title = None
         state.last_elapsed_second = None
+        state.last_toast_visible = toast_visible
         state.cached_cover = None
         state.next_cover_retry_ts = 0.0
         return
@@ -668,7 +690,11 @@ def render_idle_frame(state: LoopState, track: Optional[PlexTrack]) -> None:
 def wait_for_next_cycle() -> None:
     """Wait for poll interval or immediate wake-up triggered by button commands."""
     # Assumption: small post-command delay gives Plex state time to settle before next poll.
-    REFRESH_EVENT.wait(timeout=POLL_SECONDS)
+    timeout = POLL_SECONDS
+    if toast_is_visible():
+        remaining = max(0.0, RUNTIME_STATE.toast_until_ts - time.monotonic())
+        timeout = min(timeout, remaining)
+    REFRESH_EVENT.wait(timeout=timeout)
     if REFRESH_EVENT.is_set():
         REFRESH_EVENT.clear()
         time.sleep(0.5)
