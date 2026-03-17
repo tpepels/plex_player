@@ -371,12 +371,12 @@ def draw_button_labels(img: Image.Image, y: int, fill: str = "#d8d8d8", is_playi
     # Draw semi-transparent circle backgrounds on a composited overlay
     overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
     od = ImageDraw.Draw(overlay)
+    tmp = ImageDraw.Draw(img)
     radius = 10
-    for label_y in y_positions:
-        # Measure approximate text size to centre the circle on the glyph
-        bbox = ImageDraw.Draw(img).textbbox((x, label_y), "▌▌", font=FONT_LABEL)
-        cx = x + (bbox[2] - bbox[0]) // 2
-        cy = label_y + (bbox[3] - bbox[1]) // 2
+    for label, label_y in zip(labels, y_positions):
+        bbox = tmp.textbbox((x, label_y), label, font=FONT_LABEL)
+        cx = (bbox[0] + bbox[2]) // 2
+        cy = (bbox[1] + bbox[3]) // 2
         od.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), fill=(0, 0, 0, 120))
 
     base = img.convert("RGBA")
