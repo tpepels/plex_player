@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import io
 import os
+import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -18,14 +19,21 @@ def env(name: str, default: str) -> str:
 PLEX_SERVER = env("PLEX_SERVER", "http://192.168.1.200:32400").rstrip("/")
 PLEX_TOKEN = env("PLEX_TOKEN", "")
 PLAYER_NAME = env("PLAYER_NAME", "Plexamp Pi Zero")
-LATITUDE = float(env("LATITUDE", "41.1579"))
-LONGITUDE = float(env("LONGITUDE", "-8.6291"))
+LATITUDE_RAW = env("LATITUDE", "41.1579")
+LONGITUDE_RAW = env("LONGITUDE", "-8.6291")
 TIMEZONE = env("TIMEZONE", "Europe/Lisbon")
 FB_DEVICE = env("FB_DEVICE", "/dev/fb1")
-WIDTH = int(env("WIDTH", "320"))
-HEIGHT = int(env("HEIGHT", "240"))
-POLL_SECONDS = int(env("POLL_SECONDS", "3"))
-WEATHER_REFRESH_SECONDS = int(env("WEATHER_REFRESH_SECONDS", "900"))
+WIDTH_RAW = env("WIDTH", "320")
+HEIGHT_RAW = env("HEIGHT", "240")
+POLL_SECONDS_RAW = env("POLL_SECONDS", "3")
+WEATHER_REFRESH_SECONDS_RAW = env("WEATHER_REFRESH_SECONDS", "900")
+
+LATITUDE: float = 41.1579
+LONGITUDE: float = -8.6291
+WIDTH: int = 320
+HEIGHT: int = 240
+POLL_SECONDS: int = 3
+WEATHER_REFRESH_SECONDS: int = 900
 HTTP_TIMEOUT = 10
 
 FONT_PATH_REGULAR = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
@@ -90,6 +98,64 @@ FONT_TRACK = load_font(FONT_PATH_BOLD, 22)
 FONT_META = load_font(FONT_PATH_REGULAR, 18)
 
 
+def validate_startup():
+    """Validate configuration at startup. Exit with error if critical settings missing."""
+    global LATITUDE, LONGITUDE, WIDTH, HEIGHT, POLL_SECONDS, WEATHER_REFRESH_SECONDS
+    errors = []
+    
+    if not PLEX_TOKEN or PLEX_TOKEN.strip() == "":
+        errors.append("PLEX_TOKEN not set or empty")
+    
+    if not os.path.exists(FB_DEVICE):
+        errors.append(f"FB_DEVICE '{FB_DEVICE}' does not exist")
+    elif not os.access(FB_DEVICE, os.W_OK):
+        errors.append(f"FB_DEVICE '{FB_DEVICE}' is not writable (need root or group membership)")
+    
+    try:
+        LATITUDE = float(LATITUDE_RAW)
+        LONGITUDE = float(LONGITUDE_RAW)
+    except (TypeError, ValueError):
+        errors.append("LATITUDE and LONGITUDE must be valid numbers")
+
+    try:
+        WIDTH = int(WIDTH_RAW)
+        HEIGHT = int(HEIGHT_RAW)
+        POLL_SECONDS = int(POLL_SECONDS_RAW)
+        WEATHER_REFRESH_SECONDS = int(WEATHER_REFRESH_SECONDS_RAW)
+    except (TypeError, ValueError):
+        errors.append("WIDTH/HEIGHT/POLL_SECONDS/WEATHER_REFRESH_SECONDS must be valid integers")
+
+    if isinstance(WIDTH, int) and WIDTH <= 0:
+        errors.append("WIDTH must be > 0")
+    if isinstance(HEIGHT, int) and HEIGHT <= 0:
+        errors.append("HEIGHT must be > 0")
+    if isinstance(POLL_SECONDS, int) and POLL_SECONDS < 1:
+        errors.append("POLL_SECONDS must be >= 1")
+    if isinstance(WEATHER_REFRESH_SECONDS, int) and WEATHER_REFRESH_SECONDS < 60:
+        errors.append("WEATHER_REFRESH_SECONDS must be >= 60")
+
+    try:
+        ZoneInfo(TIMEZONE)
+    except Exception:
+        errors.append(f"TIMEZONE '{TIMEZONE}' is invalid")
+    
+    if errors:
+        print("[startup] Configuration errors:", file=sys.stderr)
+        for err in errors:
+            print(f"  - {err}", file=sys.stderr)
+        sys.exit(1)
+    
+    print("[startup] Configuration validated successfully")
+
+
+def create_error_placeholder(text: str = "Display Error") -> Image.Image:
+    """Create a fallback image when cover/rendering fails."""
+    img = Image.new("RGB", (WIDTH, HEIGHT), "black")
+    draw = ImageDraw.Draw(img)
+    text_center(draw, (HEIGHT - 20) // 2, text, FONT_SMALL, fill="#ff6666")
+    return img
+
+
 def text_center(draw: ImageDraw.ImageDraw, y: int, text: str, font, fill="white"):
     bbox = draw.textbbox((0, 0), text, font=font)
     w = bbox[2] - bbox[0]
@@ -118,11 +184,16 @@ def rgb888_to_rgb565_bytes(img: Image.Image) -> bytes:
     if img.mode != "RGB":
         img = img.convert("RGB")
     pixels = img.load()
+    if pixels is None:
+        raise ValueError("Failed to access pixel buffer")
     out = bytearray(WIDTH * HEIGHT * 2)
     i = 0
     for y in range(HEIGHT):
         for x in range(WIDTH):
-            r, g, b = pixels[x, y]
+            px = pixels[x, y]
+            if not isinstance(px, tuple) or len(px) < 3:
+                raise ValueError("Unexpected pixel format in RGB buffer")
+            r, g, b = int(px[0]), int(px[1]), int(px[2])
             value = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
             out[i] = value & 0xFF
             out[i + 1] = (value >> 8) & 0xFF
@@ -131,48 +202,71 @@ def rgb888_to_rgb565_bytes(img: Image.Image) -> bytes:
 
 
 def write_framebuffer(img: Image.Image):
-    raw = rgb888_to_rgb565_bytes(img)
-    with open(FB_DEVICE, "wb", buffering=0) as fb:
-        fb.write(raw)
+    try:
+        raw = rgb888_to_rgb565_bytes(img)
+        with open(FB_DEVICE, "wb", buffering=0) as fb:
+            fb.write(raw)
+    except PermissionError:
+        print(f"[framebuffer] Permission denied writing to {FB_DEVICE}. Need root or video group membership.", file=sys.stderr)
+        raise
+    except IOError as e:
+        print(f"[framebuffer] I/O error: {e}", file=sys.stderr)
+        raise
 
 
 def fetch_weather() -> Optional[WeatherInfo]:
+    """Fetch weather with retry logic. Returns None on failure (uses cached value)."""
     url = (
         "https://api.open-meteo.com/v1/forecast"
         f"?latitude={LATITUDE}&longitude={LONGITUDE}"
         "&current=temperature_2m,weather_code,is_day"
         f"&timezone={TIMEZONE}"
     )
-    try:
-        r = requests.get(url, timeout=HTTP_TIMEOUT)
-        r.raise_for_status()
-        cur = r.json()["current"]
-        return WeatherInfo(
-            temp_c=float(cur["temperature_2m"]),
-            weather_code=int(cur["weather_code"]),
-            is_day=int(cur["is_day"]),
-        )
-    except Exception as exc:
-        print(f"[weather] {exc}")
-        return None
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            r = requests.get(url, timeout=HTTP_TIMEOUT)
+            r.raise_for_status()
+            cur = r.json()["current"]
+            return WeatherInfo(
+                temp_c=float(cur["temperature_2m"]),
+                weather_code=int(cur["weather_code"]),
+                is_day=int(cur["is_day"]),
+            )
+        except Exception as exc:
+            if attempt < max_retries - 1:
+                backoff = 2 ** attempt
+                print(f"[weather] Attempt {attempt + 1}/{max_retries} failed: {exc}. Retrying in {backoff}s...")
+                time.sleep(backoff)
+            else:
+                print(f"[weather] Failed after {max_retries} attempts: {exc}")
+    return None
 
 
 def fetch_sessions_json() -> Optional[dict]:
     if not PLEX_TOKEN:
-        print("[plex] missing PLEX_TOKEN")
+        print("[plex] missing PLEX_TOKEN", file=sys.stderr)
         return None
-    try:
-        r = requests.get(
-            f"{PLEX_SERVER}/status/sessions",
-            params={"X-Plex-Token": PLEX_TOKEN},
-            headers={"Accept": "application/json"},
-            timeout=HTTP_TIMEOUT,
-        )
-        r.raise_for_status()
-        return r.json()
-    except Exception as exc:
-        print(f"[plex] sessions: {exc}")
-        return None
+    
+    max_retries = 2
+    for attempt in range(max_retries):
+        try:
+            r = requests.get(
+                f"{PLEX_SERVER}/status/sessions",
+                params={"X-Plex-Token": PLEX_TOKEN},
+                headers={"Accept": "application/json"},
+                timeout=HTTP_TIMEOUT,
+            )
+            r.raise_for_status()
+            return r.json()
+        except Exception as exc:
+            if attempt < max_retries - 1:
+                backoff = 2 ** attempt
+                print(f"[plex] Attempt {attempt + 1}/{max_retries} failed: {exc}. Retrying in {backoff}s...")
+                time.sleep(backoff)
+            else:
+                print(f"[plex] sessions: Failed after {max_retries} attempts: {exc}")
+    return None
 
 
 def find_player_track(data: dict) -> Optional[PlexTrack]:
@@ -198,24 +292,37 @@ def find_player_track(data: dict) -> Optional[PlexTrack]:
 def fetch_plex_cover(thumb_path: str) -> Optional[Image.Image]:
     if not thumb_path:
         return None
-    try:
-        r = requests.get(
-            f"{PLEX_SERVER}/photo/:/transcode",
-            params={
-                "url": f"{PLEX_SERVER}{thumb_path}",
-                "width": WIDTH,
-                "height": HEIGHT,
-                "minSize": 1,
-                "upscale": 1,
-                "X-Plex-Token": PLEX_TOKEN,
-            },
-            timeout=HTTP_TIMEOUT,
-        )
-        r.raise_for_status()
-        return Image.open(io.BytesIO(r.content)).convert("RGB")
-    except Exception as exc:
-        print(f"[plex] cover: {exc}")
-        return None
+    
+    max_retries = 2
+    for attempt in range(max_retries):
+        try:
+            r = requests.get(
+                f"{PLEX_SERVER}/photo/:/transcode",
+                params={
+                    "url": f"{PLEX_SERVER}{thumb_path}",
+                    "width": WIDTH,
+                    "height": HEIGHT,
+                    "minSize": 1,
+                    "upscale": 1,
+                    "X-Plex-Token": PLEX_TOKEN,
+                },
+                timeout=HTTP_TIMEOUT,
+            )
+            r.raise_for_status()
+            img = Image.open(io.BytesIO(r.content)).convert("RGB")
+            # Validate image dimensions
+            if img.size != (WIDTH, HEIGHT):
+                print(f"[plex] Cover has unexpected dimensions {img.size}, resizing...")
+                img = fit_cover(img, WIDTH, HEIGHT)
+            return img
+        except Exception as exc:
+            if attempt < max_retries - 1:
+                backoff = 2 ** attempt
+                print(f"[plex] Cover attempt {attempt + 1}/{max_retries} failed: {exc}. Retrying in {backoff}s...")
+                time.sleep(backoff)
+            else:
+                print(f"[plex] cover: Failed after {max_retries} attempts: {exc}")
+    return None
 
 
 def render_idle(weather: Optional[WeatherInfo]) -> Image.Image:
@@ -251,16 +358,20 @@ def render_now_playing(cover: Image.Image, track: PlexTrack) -> Image.Image:
 
 
 def main():
+    validate_startup()
+    
     last_weather = None
     last_weather_fetch = 0.0
     last_thumb_path = None
-    last_state = None
+    last_player_state = None
     last_idle_minute = None
     cached_cover = None
 
     while True:
         try:
             now_ts = time.time()
+            
+            # Refresh weather periodically
             if now_ts - last_weather_fetch > WEATHER_REFRESH_SECONDS:
                 last_weather = fetch_weather()
                 last_weather_fetch = now_ts
@@ -268,26 +379,61 @@ def main():
             sessions = fetch_sessions_json()
             track = find_player_track(sessions) if sessions else None
 
+            # Player is actively playing
             if track and track.state == "playing":
-                if track.thumb_path != last_thumb_path or last_state != "playing" or cached_cover is None:
-                    cover = fetch_plex_cover(track.thumb_path) if track.thumb_path else None
-                    if cover:
-                        cached_cover = cover
-                        write_framebuffer(render_now_playing(cover, track))
-                        last_thumb_path = track.thumb_path
-                        last_state = "playing"
+                # Fetch fresh cover if track changed or state changed
+                if track.thumb_path != last_thumb_path or last_player_state != "playing":
+                    cached_cover = None
+                    if track.thumb_path:
+                        cached_cover = fetch_plex_cover(track.thumb_path)
+                    
+                    if cached_cover:
+                        try:
+                            write_framebuffer(render_now_playing(cached_cover, track))
+                            last_thumb_path = track.thumb_path
+                            last_player_state = "playing"
+                        except Exception as e:
+                            print(f"[render] Failed to render now-playing: {e}")
+                            img = create_error_placeholder("Render Error")
+                            try:
+                                write_framebuffer(img)
+                            except Exception as e2:
+                                print(f"[framebuffer] Failed to write error placeholder: {e2}")
+                    else:
+                        # No cover available, show placeholder
+                        img = create_error_placeholder("No Album Art")
+                        try:
+                            write_framebuffer(img)
+                            last_player_state = "playing"
+                        except Exception as e:
+                            print(f"[framebuffer] Failed to write placeholder: {e}")
+            
+            # Player is paused, stopped, or no track found
             else:
                 minute_key = datetime.now(ZoneInfo(TIMEZONE)).strftime("%Y-%m-%d %H:%M")
-                if minute_key != last_idle_minute or last_state == "playing":
-                    write_framebuffer(render_idle(last_weather))
-                    last_idle_minute = minute_key
-                    last_state = "idle"
-                    last_thumb_path = None
-                    cached_cover = None
+                if minute_key != last_idle_minute or last_player_state == "playing":
+                    try:
+                        write_framebuffer(render_idle(last_weather))
+                        last_idle_minute = minute_key
+                        last_player_state = "idle"
+                        last_thumb_path = None
+                        cached_cover = None
+                    except Exception as e:
+                        print(f"[render] Failed to render idle screen: {e}")
+                        img = create_error_placeholder("Display Error")
+                        try:
+                            write_framebuffer(img)
+                        except Exception as e2:
+                            print(f"[framebuffer] Failed to write error placeholder: {e2}")
+        
         except KeyboardInterrupt:
             raise
+        except PermissionError as e:
+            print(f"[main] Permission error (framebuffer not writable?): {e}", file=sys.stderr)
+            time.sleep(5)
         except Exception as exc:
-            print(f"[main] {exc}")
+            print(f"[main] {exc}", file=sys.stderr)
+            time.sleep(5)
 
         time.sleep(POLL_SECONDS)
 

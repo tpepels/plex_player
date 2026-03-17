@@ -147,6 +147,7 @@ install_service() {
   fi
 
   log "Installing systemd service"
+  log "Note: Service will run as root to access framebuffer device"
   cat <<EOFUNIT | $SUDO tee "$SERVICE_FILE" >/dev/null
 [Unit]
 Description=Plex LCD now-playing display
@@ -155,7 +156,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=$USER
+User=root
 WorkingDirectory=$APP_DIR
 EnvironmentFile=$ENV_FILE
 ExecStart=/usr/bin/python3 $APP_DIR/plexlcd.py
