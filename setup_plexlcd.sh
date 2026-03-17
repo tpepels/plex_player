@@ -101,7 +101,7 @@ load_env_file() {
 write_env() {
   mkdir -p "$APP_DIR"
 
-  local plex_host player_name plex_token latitude longitude timezone fb_device width height poll_seconds weather_refresh
+  local plex_host player_name plex_token latitude longitude timezone fb_device width height poll_seconds weather_refresh display_x_shift
   plex_host=$(prompt_default "Plex server URL" "http://plex.local:32400")
   player_name=$(prompt_default "Exact Plexamp player name" "Plexamp Pi Zero")
   plex_token=$(prompt_secret "Plex token")
@@ -111,6 +111,7 @@ write_env() {
   fb_device=$(prompt_default "Framebuffer device" "/dev/fb1")
   width=$(prompt_default "Display width" "320")
   height=$(prompt_default "Display height" "240")
+  display_x_shift=$(prompt_default "Display X shift (pixels, negative/positive)" "0")
   poll_seconds=$(prompt_default "Plex poll interval seconds" "3")
   weather_refresh=$(prompt_default "Weather refresh seconds" "900")
 
@@ -124,6 +125,7 @@ TIMEZONE="$timezone"
 FB_DEVICE="$fb_device"
 WIDTH="$width"
 HEIGHT="$height"
+DISPLAY_X_SHIFT="$display_x_shift"
 POLL_SECONDS="$poll_seconds"
 WEATHER_REFRESH_SECONDS="$weather_refresh"
 EOFENV

@@ -61,6 +61,7 @@ WIDTH_RAW = env("WIDTH", "320")
 HEIGHT_RAW = env("HEIGHT", "240")
 POLL_SECONDS_RAW = env("POLL_SECONDS", "3")
 WEATHER_REFRESH_SECONDS_RAW = env("WEATHER_REFRESH_SECONDS", "900")
+DISPLAY_X_SHIFT_RAW = env("DISPLAY_X_SHIFT", "0")
 
 LATITUDE: float = 0.0
 LONGITUDE: float = 0.0
@@ -68,6 +69,7 @@ WIDTH: int = 320
 HEIGHT: int = 240
 POLL_SECONDS: int = 3
 WEATHER_REFRESH_SECONDS: int = 900
+DISPLAY_X_SHIFT: int = 0
 HTTP_TIMEOUT = 10
 COVER_RETRY_SECONDS = 20
 
@@ -135,7 +137,7 @@ FONT_META = load_font(FONT_PATH_REGULAR, 18)
 
 def validate_startup():
     """Validate configuration at startup. Exit with error if critical settings missing."""
-    global LATITUDE, LONGITUDE, WIDTH, HEIGHT, POLL_SECONDS, WEATHER_REFRESH_SECONDS
+    global LATITUDE, LONGITUDE, WIDTH, HEIGHT, POLL_SECONDS, WEATHER_REFRESH_SECONDS, DISPLAY_X_SHIFT
     errors = []
     
     if not PLEX_TOKEN or PLEX_TOKEN.strip() == "":
@@ -157,8 +159,9 @@ def validate_startup():
         HEIGHT = int(HEIGHT_RAW)
         POLL_SECONDS = int(POLL_SECONDS_RAW)
         WEATHER_REFRESH_SECONDS = int(WEATHER_REFRESH_SECONDS_RAW)
+        DISPLAY_X_SHIFT = int(DISPLAY_X_SHIFT_RAW)
     except (TypeError, ValueError):
-        errors.append("WIDTH/HEIGHT/POLL_SECONDS/WEATHER_REFRESH_SECONDS must be valid integers")
+        errors.append("WIDTH/HEIGHT/POLL_SECONDS/WEATHER_REFRESH_SECONDS/DISPLAY_X_SHIFT must be valid integers")
 
     if isinstance(WIDTH, int) and WIDTH <= 0:
         errors.append("WIDTH must be > 0")
@@ -168,6 +171,8 @@ def validate_startup():
         errors.append("POLL_SECONDS must be >= 1")
     if isinstance(WEATHER_REFRESH_SECONDS, int) and WEATHER_REFRESH_SECONDS < 60:
         errors.append("WEATHER_REFRESH_SECONDS must be >= 60")
+    if isinstance(DISPLAY_X_SHIFT, int) and abs(DISPLAY_X_SHIFT) >= max(1, WIDTH):
+        errors.append("DISPLAY_X_SHIFT must be smaller than WIDTH")
 
     try:
         ZoneInfo(TIMEZONE)
@@ -215,6 +220,15 @@ def fit_cover(img: Image.Image, w: int, h: int) -> Image.Image:
     return ImageOps.fit(img.convert("RGB"), (w, h), method=Image.Resampling.LANCZOS)
 
 
+def apply_display_shift(img: Image.Image) -> Image.Image:
+    """Apply small horizontal correction for framebuffer driver panel offsets."""
+    if DISPLAY_X_SHIFT == 0:
+        return img
+    shifted = Image.new("RGB", (WIDTH, HEIGHT), "black")
+    shifted.paste(img, (DISPLAY_X_SHIFT, 0))
+    return shifted
+
+
 def rgb888_to_rgb565_bytes(img: Image.Image) -> bytes:
     if img.mode != "RGB":
         img = img.convert("RGB")
@@ -238,7 +252,7 @@ def rgb888_to_rgb565_bytes(img: Image.Image) -> bytes:
 
 def write_framebuffer(img: Image.Image):
     try:
-        raw = rgb888_to_rgb565_bytes(img)
+        raw = rgb888_to_rgb565_bytes(apply_display_shift(img))
         with open(FB_DEVICE, "wb", buffering=0) as fb:
             fb.write(raw)
     except PermissionError:
