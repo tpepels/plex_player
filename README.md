@@ -8,6 +8,7 @@ Lightweight Plex/Plexamp now-playing display for Raspberry Pi framebuffer screen
 - While idle: shows clock and weather.
 - If artwork cannot be fetched: shows a "No Album Art" placeholder.
 - Optional GPIO buttons can control Plexamp: play/pause, stop, next.
+- When GPIO buttons are enabled, small on-screen labels are shown for them.
 
 ## Requirements
 

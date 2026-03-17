@@ -171,6 +171,7 @@ FONT_WEATHER = load_font(FONT_PATH_REGULAR, 24)
 FONT_SMALL = load_font(FONT_PATH_REGULAR, 18)
 FONT_TRACK = load_font(FONT_PATH_BOLD, 22)
 FONT_META = load_font(FONT_PATH_REGULAR, 18)
+FONT_LABEL = load_font(FONT_PATH_REGULAR, 12)
 
 
 def validate_startup():
@@ -312,6 +313,24 @@ def text_center(draw: ImageDraw.ImageDraw, y: int, text: str, font, fill="white"
     w = bbox[2] - bbox[0]
     x = max(0, (WIDTH - w) // 2)
     draw.text((x, y), text, font=font, fill=fill)
+
+
+def draw_button_labels(img: Image.Image, y: int, fill: str = "#d8d8d8") -> Image.Image:
+    if not BUTTONS_ENABLED:
+        return img
+
+    draw = ImageDraw.Draw(img)
+    labels = ["Play/Pause", "Stop", "Next"]
+    segment_width = WIDTH // len(labels)
+
+    for index, label in enumerate(labels):
+        x_center = index * segment_width + segment_width // 2
+        bbox = draw.textbbox((0, 0), label, font=FONT_LABEL)
+        label_width = bbox[2] - bbox[0]
+        x = max(2, x_center - label_width // 2)
+        draw.text((x, y), label, font=FONT_LABEL, fill=fill)
+
+    return img
 
 
 def truncate(draw: ImageDraw.ImageDraw, text: str, font, max_width: int) -> str:
@@ -508,22 +527,22 @@ def render_idle(weather: Optional[WeatherInfo]) -> Image.Image:
         text_center(draw, 182, label, FONT_SMALL, fill="#cfcfcf")
     else:
         text_center(draw, 165, "Weather unavailable", FONT_SMALL, fill="#888888")
-    return img
+    return draw_button_labels(img, HEIGHT - 16, fill="#8f8f8f")
 
 
 def render_now_playing(cover: Image.Image, track: PlexTrack) -> Image.Image:
     bg = fit_cover(cover, WIDTH, HEIGHT)
     overlay = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
     od = ImageDraw.Draw(overlay)
-    od.rectangle((0, HEIGHT - 68, WIDTH, HEIGHT), fill=(0, 0, 0, 150))
+    od.rectangle((0, HEIGHT - 82, WIDTH, HEIGHT), fill=(0, 0, 0, 150))
     composed = Image.alpha_composite(bg.convert("RGBA"), overlay).convert("RGB")
     draw = ImageDraw.Draw(composed)
 
     title = truncate(draw, track.title, FONT_TRACK, WIDTH - 16)
     artist = truncate(draw, track.artist, FONT_META, WIDTH - 16)
-    draw.text((8, HEIGHT - 60), title, font=FONT_TRACK, fill="white")
-    draw.text((8, HEIGHT - 32), artist, font=FONT_META, fill="#dddddd")
-    return composed
+    draw.text((8, HEIGHT - 74), title, font=FONT_TRACK, fill="white")
+    draw.text((8, HEIGHT - 46), artist, font=FONT_META, fill="#dddddd")
+    return draw_button_labels(composed, HEIGHT - 16)
 
 
 def main():
