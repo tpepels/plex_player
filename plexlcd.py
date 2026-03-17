@@ -31,7 +31,7 @@ from plex_service import (
     playback_status_text,
     send_playback_command,
 )
-from transition_rules import apply_button_rules, compute_display_elapsed_ms, resolve_transition
+from transition_rules import apply_button_rules, compute_display_elapsed_ms, resolve_transition, resolve_wait_timeout
 from weather_service import WEATHER_CODES, fetch_weather, get_weather_symbol
 from zoneinfo import ZoneInfo
 
@@ -115,6 +115,7 @@ COMMAND_CONFIRM_SECONDS = 5.0
 BUTTON_DEVICES = []
 RUNTIME_STATE = RuntimeState()
 REFRESH_EVENT = threading.Event()
+COMMAND_COUNTER_LOCK = threading.Lock()
 
 
 # Font lookup helpers
@@ -266,8 +267,9 @@ def validate_startup():
 
 def next_command_id() -> int:
     """Return monotonically increasing command id for Plex playback endpoints."""
-    RUNTIME_STATE.command_counter += 1
-    return RUNTIME_STATE.command_counter
+    with COMMAND_COUNTER_LOCK:
+        RUNTIME_STATE.command_counter += 1
+        return RUNTIME_STATE.command_counter
 
 
 def send_plex_playback_command(action: str):
@@ -727,12 +729,15 @@ def render_idle_frame(state: LoopState, track: Optional[PlexTrack]) -> None:
 def wait_for_next_cycle(state: LoopState) -> None:
     """Wait for poll interval or immediate wake-up triggered by button commands."""
     # Assumption: small post-command delay gives Plex state time to settle before next poll.
-    timeout = POLL_SECONDS
-    if state.last_player_state == "playing":
-        timeout = min(timeout, max(1, PROGRESS_UPDATE_SECONDS))
+    remaining = None
     if toast_is_visible():
         remaining = max(0.0, RUNTIME_STATE.toast_until_ts - time.monotonic())
-        timeout = min(timeout, remaining)
+    timeout = resolve_wait_timeout(
+        last_player_state=state.last_player_state,
+        poll_seconds=POLL_SECONDS,
+        progress_update_seconds=PROGRESS_UPDATE_SECONDS,
+        toast_remaining_seconds=remaining,
+    )
     REFRESH_EVENT.wait(timeout=timeout)
     if REFRESH_EVENT.is_set():
         REFRESH_EVENT.clear()
@@ -782,6 +787,7 @@ def main():
             snapshot = PlaybackSnapshot(
                 now_ts=now_ts,
                 track=track,
+                last_track_identity=state.last_track_identity,
                 last_player_state=state.last_player_state,
                 no_track_grace_until_ts=state.no_track_grace_until_ts,
                 force_idle_until_ts=RUNTIME_STATE.force_idle_until_ts,

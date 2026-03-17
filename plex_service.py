@@ -25,12 +25,6 @@ def normalize_playback_state(item: dict) -> str:
     player_state = str(player.get("state") or "").strip().lower()
     session_state = str(session.get("state") or "").strip().lower()
 
-    # Some clients keep Player.state as "playing" while Session.state moves to
-    # paused/stopped. Preserve those non-playing transitions so UI can leave the
-    # now-playing screen immediately.
-    if player_state == "playing" and session_state in {"paused", "stopped"}:
-        return session_state
-
     if player_state and player_state != "none":
         return player_state
     if session_state and session_state != "none":
@@ -111,18 +105,15 @@ def find_player_track(data: dict, player_name: str) -> Optional[PlexTrack]:
             duration = item.get("duration") or media0.get("duration")
             view_offset = item.get("viewOffset")
             state = normalize_playback_state(item)
-
-            # Plexamp can briefly report stale "playing" for the finished last
-            # queue item. If progress reached track end, treat it as stopped so
-            # the UI can return to idle immediately.
             try:
                 duration_i = int(duration) if duration is not None else None
                 view_offset_i = int(view_offset) if view_offset is not None else None
             except (TypeError, ValueError):
                 duration_i = None
                 view_offset_i = None
-            if state == "playing" and duration_i and view_offset_i is not None and view_offset_i >= duration_i:
-                state = "stopped"
+
+            player_state_raw = str(player.get("state") or "").strip().lower() or None
+            session_state_raw = str(item.get("Session", {}).get("state") or "").strip().lower() or None
 
             thumb = (
                 item.get("thumb")
@@ -143,6 +134,8 @@ def find_player_track(data: dict, player_name: str) -> Optional[PlexTrack]:
                 ),
                 player_address=player.get("address"),
                 player_port=int(player.get("port") or 32500),
+                player_state_raw=player_state_raw,
+                session_state_raw=session_state_raw,
                 elapsed_ms=view_offset_i,
                 duration_ms=duration_i,
             )

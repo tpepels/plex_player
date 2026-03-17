@@ -57,6 +57,8 @@ class PlexTrack:
     target_client_identifier: Optional[str]
     player_address: Optional[str] = None
     player_port: int = 32500
+    player_state_raw: Optional[str] = None
+    session_state_raw: Optional[str] = None
     elapsed_ms: Optional[int] = None
     duration_ms: Optional[int] = None
 
@@ -110,6 +112,7 @@ class PendingCommand:
     command_id: int
     issued_ts: float
     deadline_ts: float
+    expected_states: tuple[str, ...] = ()
 
 
 @dataclass
@@ -118,6 +121,7 @@ class PlaybackSnapshot:
 
     now_ts: float
     track: Optional[PlexTrack]
+    last_track_identity: Optional[str]
     last_player_state: Optional[str]
     no_track_grace_until_ts: float
     force_idle_until_ts: float

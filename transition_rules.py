@@ -15,6 +15,31 @@ def _normalized_state(track: Optional[PlexTrack]) -> str:
     return str(track.state or "unknown").strip().lower()
 
 
+def _effective_playback_state(track: Optional[PlexTrack], timeline_state: str) -> str:
+    """Resolve effective playback state with explicit source precedence."""
+
+    if timeline_state in {"playing", "paused", "stopped", "none"}:
+        return "stopped" if timeline_state == "none" else timeline_state
+
+    if not track:
+        return "unknown"
+
+    player_state = str(track.player_state_raw or "").strip().lower()
+    session_state = str(track.session_state_raw or "").strip().lower()
+    base_state = _normalized_state(track)
+
+    # Prefer explicit non-playing session state over stale player "playing".
+    if player_state == "playing" and session_state in {"paused", "stopped"}:
+        base_state = session_state
+
+    # Queue-end stale-playing guard: if almost at duration end, treat as stopped.
+    if base_state == "playing" and track.duration_ms and track.elapsed_ms is not None:
+        if track.elapsed_ms >= max(0, track.duration_ms - 1500):
+            return "stopped"
+
+    return base_state
+
+
 def _normalized_timeline_state(state: Optional[str]) -> str:
     return str(state or "").strip().lower()
 
@@ -36,6 +61,18 @@ def _track_identity(track: PlexTrack) -> str:
     )
 
 
+def _idle_track_from_effective_state(track: Optional[PlexTrack], effective_state: str) -> Optional[PlexTrack]:
+    """Map effective playback state to the idle payload expected by the renderer."""
+
+    if not track:
+        return None
+    if effective_state == "paused":
+        return replace(track, state="paused")
+    if effective_state == "stopped":
+        return None
+    return track
+
+
 def apply_button_rules(
     runtime_state: RuntimeState,
     action: str,
@@ -54,15 +91,19 @@ def apply_button_rules(
 
     if action == "next":
         runtime_state.toast_text = "Skipped"
+        expected_states = ("playing",)
     elif action == "stop":
         runtime_state.toast_text = "Stopped"
         runtime_state.force_idle_until_ts = now_ts + stop_force_idle_seconds
+        expected_states = ("stopped", "paused", "none", "unknown")
     elif action == "play_pause":
         # A local toggle intent should cancel previous forced-idle window.
         runtime_state.force_idle_until_ts = 0.0
         runtime_state.toast_text = "Paused" if runtime_state.current_playback_state == "playing" else "Playing"
+        expected_states = ("paused", "stopped") if runtime_state.current_playback_state == "playing" else ("playing",)
     else:
         runtime_state.toast_text = "Command sent"
+        expected_states = ()
 
     runtime_state.toast_until_ts = now_ts + toast_duration_seconds
     runtime_state.pending_command = PendingCommand(
@@ -70,6 +111,7 @@ def apply_button_rules(
         command_id=int(command_id),
         issued_ts=now_ts,
         deadline_ts=now_ts + confirm_timeout_seconds,
+        expected_states=expected_states,
     )
 
 
@@ -77,8 +119,8 @@ def resolve_transition(snapshot: PlaybackSnapshot, *, no_track_grace_seconds: fl
     """Resolve transition rules from Plex snapshot plus local button intent."""
 
     no_track_grace_seconds = max(0.0, float(no_track_grace_seconds))
-    track_state = _normalized_state(snapshot.track)
     timeline_state = _normalized_timeline_state(snapshot.timeline_state)
+    track_state = _effective_playback_state(snapshot.track, timeline_state)
     clear_pending = False
 
     pending = snapshot.pending_command
@@ -91,19 +133,26 @@ def resolve_transition(snapshot: PlaybackSnapshot, *, no_track_grace_seconds: fl
         return TransitionDecision(
             mode=TransitionMode.IDLE,
             reason="pending_stop_confirmed",
-            idle_track=snapshot.track,
-            clear_force_idle=True,
+            idle_track=None,
             clear_pending_command=True,
         )
 
-    # Timeline tie-break rule: if player timeline says not playing, prefer that over
-    # stale session-level "playing".
+    # Two-phase confirmation for NEXT: require track identity change while still playing.
+    if pending and pending.action == "next" and snapshot.track:
+        current_identity = _track_identity(snapshot.track)
+        if snapshot.last_track_identity and current_identity != snapshot.last_track_identity:
+            clear_pending = True
+
+    # Two-phase confirmation for PLAY_PAUSE: confirm expected resulting playback state.
+    if pending and pending.action == "play_pause" and pending.expected_states:
+        if track_state in pending.expected_states:
+            clear_pending = True
+
+    # Timeline tie-break rule is already part of effective state. Use it here to
+    # shape idle-track payload for status display.
     if timeline_state in {"paused", "stopped", "none"}:
-        if snapshot.track and track_state == "playing":
-            if timeline_state == "paused":
-                idle_track = replace(snapshot.track, state="paused")
-            else:
-                idle_track = None
+        if snapshot.track:
+            idle_track = _idle_track_from_effective_state(snapshot.track, track_state)
             return TransitionDecision(
                 mode=TransitionMode.IDLE,
                 reason="timeline_not_playing",
@@ -153,9 +202,26 @@ def resolve_transition(snapshot: PlaybackSnapshot, *, no_track_grace_seconds: fl
     return TransitionDecision(
         mode=TransitionMode.IDLE,
         reason="default_idle",
-        idle_track=snapshot.track,
+        idle_track=_idle_track_from_effective_state(snapshot.track, track_state),
         clear_pending_command=clear_pending,
     )
+
+
+def resolve_wait_timeout(
+    *,
+    last_player_state: Optional[str],
+    poll_seconds: float,
+    progress_update_seconds: float,
+    toast_remaining_seconds: Optional[float],
+) -> float:
+    """Resolve loop wait timeout from explicit timing rules."""
+
+    timeout = max(0.1, float(poll_seconds))
+    if str(last_player_state or "").strip().lower() == "playing":
+        timeout = min(timeout, max(1.0, float(progress_update_seconds)))
+    if toast_remaining_seconds is not None:
+        timeout = min(timeout, max(0.0, float(toast_remaining_seconds)))
+    return timeout
 
 
 def compute_display_elapsed_ms(state: LoopState, track: PlexTrack, now_ts: float) -> Optional[int]:

@@ -1,7 +1,7 @@
 import unittest
 
 from models import LoopState, PlaybackSnapshot, PlexTrack, RuntimeState, TransitionMode
-from transition_rules import apply_button_rules, compute_display_elapsed_ms, resolve_transition
+from transition_rules import apply_button_rules, compute_display_elapsed_ms, resolve_transition, resolve_wait_timeout
 
 
 class TransitionRulesTests(unittest.TestCase):
@@ -58,6 +58,7 @@ class TransitionRulesTests(unittest.TestCase):
         snapshot = PlaybackSnapshot(
             now_ts=10.0,
             track=self._track(state="playing"),
+            last_track_identity=None,
             last_player_state="playing",
             no_track_grace_until_ts=15.0,
             force_idle_until_ts=20.0,
@@ -71,6 +72,7 @@ class TransitionRulesTests(unittest.TestCase):
         snapshot = PlaybackSnapshot(
             now_ts=10.0,
             track=self._track(state="playing"),
+            last_track_identity=None,
             last_player_state="paused",
             no_track_grace_until_ts=0.0,
             force_idle_until_ts=0.0,
@@ -86,6 +88,7 @@ class TransitionRulesTests(unittest.TestCase):
         snapshot = PlaybackSnapshot(
             now_ts=10.0,
             track=None,
+            last_track_identity=None,
             last_player_state="playing",
             no_track_grace_until_ts=12.0,
             force_idle_until_ts=0.0,
@@ -109,6 +112,7 @@ class TransitionRulesTests(unittest.TestCase):
         snapshot = PlaybackSnapshot(
             now_ts=101.0,
             track=self._track(state="paused"),
+            last_track_identity=None,
             last_player_state="playing",
             no_track_grace_until_ts=0.0,
             force_idle_until_ts=0.0,
@@ -118,6 +122,31 @@ class TransitionRulesTests(unittest.TestCase):
         self.assertEqual(decision.mode, TransitionMode.IDLE)
         self.assertEqual(decision.reason, "pending_stop_confirmed")
         self.assertTrue(decision.clear_pending_command)
+
+    def test_pending_stop_confirmation_keeps_force_idle_window(self):
+        runtime = RuntimeState(current_playback_state="playing")
+        apply_button_rules(
+            runtime,
+            "stop",
+            command_id=9,
+            now_ts=100.0,
+            toast_duration_seconds=0.7,
+            stop_force_idle_seconds=4.0,
+            confirm_timeout_seconds=5.0,
+        )
+        snapshot = PlaybackSnapshot(
+            now_ts=101.0,
+            track=self._track(state="paused"),
+            last_track_identity=None,
+            last_player_state="playing",
+            no_track_grace_until_ts=0.0,
+            force_idle_until_ts=104.0,
+            pending_command=runtime.pending_command,
+        )
+        decision = resolve_transition(snapshot, no_track_grace_seconds=4.0)
+        self.assertEqual(decision.reason, "pending_stop_confirmed")
+        self.assertFalse(decision.clear_force_idle)
+        self.assertIsNone(decision.idle_track)
 
     def test_pending_timeout_clears_command(self):
         runtime = RuntimeState(current_playback_state="playing")
@@ -133,6 +162,7 @@ class TransitionRulesTests(unittest.TestCase):
         snapshot = PlaybackSnapshot(
             now_ts=102.0,
             track=None,
+            last_track_identity=None,
             last_player_state="idle",
             no_track_grace_until_ts=0.0,
             force_idle_until_ts=0.0,
@@ -140,6 +170,71 @@ class TransitionRulesTests(unittest.TestCase):
         )
         decision = resolve_transition(snapshot, no_track_grace_seconds=4.0)
         self.assertTrue(decision.clear_pending_command)
+
+    def test_pending_next_confirmed_on_track_identity_change(self):
+        runtime = RuntimeState(current_playback_state="playing")
+        apply_button_rules(
+            runtime,
+            "next",
+            command_id=3,
+            now_ts=100.0,
+            toast_duration_seconds=0.7,
+            stop_force_idle_seconds=4.0,
+            confirm_timeout_seconds=5.0,
+        )
+        snapshot = PlaybackSnapshot(
+            now_ts=101.0,
+            track=self._track(title="Song B", state="playing"),
+            last_track_identity="Song A|Artist|Album|/thumb|100000",
+            last_player_state="playing",
+            no_track_grace_until_ts=0.0,
+            force_idle_until_ts=0.0,
+            pending_command=runtime.pending_command,
+        )
+        decision = resolve_transition(snapshot, no_track_grace_seconds=4.0)
+        self.assertEqual(decision.mode, TransitionMode.PLAYING)
+        self.assertTrue(decision.clear_pending_command)
+
+    def test_timeline_none_forces_idle_without_track_payload(self):
+        snapshot = PlaybackSnapshot(
+            now_ts=10.0,
+            track=self._track(state="playing"),
+            last_track_identity=None,
+            last_player_state="playing",
+            no_track_grace_until_ts=0.0,
+            force_idle_until_ts=0.0,
+            pending_command=None,
+            timeline_state="none",
+        )
+        decision = resolve_transition(snapshot, no_track_grace_seconds=4.0)
+        self.assertEqual(decision.mode, TransitionMode.IDLE)
+        self.assertEqual(decision.reason, "timeline_not_playing")
+        self.assertIsNone(decision.idle_track)
+
+    def test_near_end_stale_playing_maps_to_idle_without_track(self):
+        snapshot = PlaybackSnapshot(
+            now_ts=10.0,
+            track=self._track(state="playing", elapsed_ms=98_700, duration_ms=100_000),
+            last_track_identity=None,
+            last_player_state="playing",
+            no_track_grace_until_ts=0.0,
+            force_idle_until_ts=0.0,
+            pending_command=None,
+            timeline_state=None,
+        )
+        decision = resolve_transition(snapshot, no_track_grace_seconds=4.0)
+        self.assertEqual(decision.mode, TransitionMode.IDLE)
+        self.assertEqual(decision.reason, "default_idle")
+        self.assertIsNone(decision.idle_track)
+
+    def test_wait_timeout_uses_progress_when_playing(self):
+        timeout = resolve_wait_timeout(
+            last_player_state="playing",
+            poll_seconds=5.0,
+            progress_update_seconds=2.0,
+            toast_remaining_seconds=None,
+        )
+        self.assertEqual(timeout, 2.0)
 
     def test_elapsed_interpolation_and_clamp(self):
         state = LoopState()
