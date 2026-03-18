@@ -39,6 +39,32 @@ systemctl status plexlcd.service
 - Plex token
 - Plex player name exactly as shown in Plex sessions
 
+## Screen Compatibility
+
+This project is being developed and tuned for a specific 320x240 framebuffer LCD setup on Raspberry Pi.
+
+If you use a different screen, you should expect to adjust layout and device settings.
+
+Start with these `.env` values:
+
+- `FB_DEVICE`: framebuffer path for your panel (common values: `/dev/fb0`, `/dev/fb1`)
+- `WIDTH`, `HEIGHT`: your real panel resolution
+- `DISPLAY_X_SHIFT`: horizontal offset correction if the image is shifted
+
+Then tune visual/button placement as needed:
+
+- `BUTTON_LABEL_PLAY_Y_PERCENT`
+- `BUTTON_LABEL_STOP_Y_PERCENT`
+- `BUTTON_LABEL_NEXT_Y_PERCENT`
+
+Recommended adaptation flow:
+
+1. Set framebuffer and resolution values.
+2. Run `./setup_plexlcd.sh fb` to verify the panel and framebuffer mapping.
+3. Run `python3 plexlcd.py` and check alignment/cropping.
+4. Adjust `DISPLAY_X_SHIFT` and button label percentages until it looks right.
+5. If text/symbols render poorly, install fonts with `./setup_plexlcd.sh install` and optionally set `FONT_PATH_*` values.
+
 ## Configuration
 
 The app reads `.env` in this folder.
