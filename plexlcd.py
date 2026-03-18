@@ -240,33 +240,15 @@ def validate_startup():
             log_message("startup", f"- {err}", level="ERROR", stderr=True)
         sys.exit(1)
 
-    field_map = {
-        "PLEX_SERVER": "plex_server",
-        "PLEX_TOKEN": "plex_token",
-        "PLAYER_NAME": "player_name",
-        "LATITUDE": "latitude",
-        "LONGITUDE": "longitude",
-        "TIMEZONE": "timezone",
-        "LOCATION_NAME": "location_name",
-        "FB_DEVICE": "fb_device",
-        "WIDTH": "width",
-        "HEIGHT": "height",
-        "BUTTONS_ENABLED": "buttons_enabled",
-        "BUTTON_PLAY_PAUSE_PIN": "button_play_pause_pin",
-        "BUTTON_STOP_PIN": "button_stop_pin",
-        "BUTTON_NEXT_PIN": "button_next_pin",
-        "BUTTON_BOUNCE_TIME": "button_bounce_time",
-        "BUTTON_LABEL_PLAY_Y_PERCENT": "button_label_play_y_percent",
-        "BUTTON_LABEL_STOP_Y_PERCENT": "button_label_stop_y_percent",
-        "BUTTON_LABEL_NEXT_Y_PERCENT": "button_label_next_y_percent",
-        "POLL_SECONDS": "poll_seconds",
-        "WEATHER_REFRESH_SECONDS": "weather_refresh_seconds",
-        "PROGRESS_UPDATE_SECONDS": "progress_update_seconds",
-        "NO_TRACK_GRACE_SECONDS": "no_track_grace_seconds",
-        "DISPLAY_X_SHIFT": "display_x_shift",
-        "DEBUG_LOGGING": "debug_logging",
-    }
-    globals().update({name: getattr(cfg, attr) for name, attr in field_map.items()})
+    _fields = (
+        "PLEX_SERVER", "PLEX_TOKEN", "PLAYER_NAME", "LATITUDE", "LONGITUDE",
+        "TIMEZONE", "LOCATION_NAME", "FB_DEVICE", "WIDTH", "HEIGHT", "BUTTONS_ENABLED",
+        "BUTTON_PLAY_PAUSE_PIN", "BUTTON_STOP_PIN", "BUTTON_NEXT_PIN", "BUTTON_BOUNCE_TIME",
+        "BUTTON_LABEL_PLAY_Y_PERCENT", "BUTTON_LABEL_STOP_Y_PERCENT", "BUTTON_LABEL_NEXT_Y_PERCENT",
+        "POLL_SECONDS", "WEATHER_REFRESH_SECONDS", "PROGRESS_UPDATE_SECONDS",
+        "NO_TRACK_GRACE_SECONDS", "DISPLAY_X_SHIFT", "DEBUG_LOGGING",
+    )
+    globals().update({f: getattr(cfg, f.lower()) for f in _fields})
 
     log_message("startup", "Configuration validated successfully")
 
@@ -434,21 +416,13 @@ def rgb888_to_rgb565_bytes(img: Image.Image) -> bytes:
 
     if img.mode != "RGB":
         img = img.convert("RGB")
-    pixels = img.load()
-    if pixels is None:
-        raise ValueError("Failed to access pixel buffer")
+    raw = img.tobytes()
     out = bytearray(WIDTH * HEIGHT * 2)
-    i = 0
-    for y in range(HEIGHT):
-        for x in range(WIDTH):
-            px = pixels[x, y]
-            if not isinstance(px, tuple) or len(px) < 3:
-                raise ValueError("Unexpected pixel format in RGB buffer")
-            r, g, b = int(px[0]), int(px[1]), int(px[2])
-            value = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
-            out[i] = value & 0xFF
-            out[i + 1] = (value >> 8) & 0xFF
-            i += 2
+    for i in range(WIDTH * HEIGHT):
+        r, g, b = raw[i * 3], raw[i * 3 + 1], raw[i * 3 + 2]
+        v = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
+        out[i * 2] = v & 0xFF
+        out[i * 2 + 1] = v >> 8
     return bytes(out)
 
 
@@ -461,11 +435,16 @@ def write_framebuffer(img: Image.Image):
             fb.write(raw)
     except PermissionError:
         print(f"[framebuffer] Permission denied writing to {FB_DEVICE}. Need root or video group membership.", file=sys.stderr)
-        raise
-    except IOError as e:
-        print(f"[framebuffer] I/O error: {e}", file=sys.stderr)
-        raise
 
+            overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+            od = ImageDraw.Draw(overlay)
+            tmp = ImageDraw.Draw(img)
+            for _, label, label_y in button_items:
+                bbox = tmp.textbbox((x, label_y), label, font=FONT_LABEL)
+                cx, cy = (bbox[0] + bbox[2]) // 2, (bbox[1] + bbox[3]) // 2
+                od.ellipse((cx - 10, cy - 10, cx + 10, cy + 10), fill=(0, 0, 0, 120))
+            img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
+            draw = ImageDraw.Draw(img)
 
 # Rendering pipeline for idle and now-playing screens
 def render_idle(
@@ -491,29 +470,11 @@ def render_idle(
         text_center(draw, 172, label, FONT_SMALL, fill="#cfcfcf")
 
         if weather.next_hour_weather_code is not None and weather.next_hour_temp_c is not None:
-            next_symbol = get_weather_symbol(weather.next_hour_weather_code, weather.is_day)
-            next_temp_text = f"{round(weather.next_hour_temp_c):.0f}C"
-            next_prefix = "Next hr:"
-            prefix_bbox = draw.textbbox((0, 0), next_prefix, font=FONT_PROGRESS)
-            icon_bbox = draw.textbbox((0, 0), next_symbol, font=FONT_WEATHER_ICON)
-            temp_bbox = draw.textbbox((0, 0), next_temp_text, font=FONT_SMALL)
-            prefix_w = prefix_bbox[2] - prefix_bbox[0]
-            icon_w = icon_bbox[2] - icon_bbox[0]
-            temp_w = temp_bbox[2] - temp_bbox[0]
-            prefix_h = prefix_bbox[3] - prefix_bbox[1]
-            icon_h = icon_bbox[3] - icon_bbox[1]
-            temp_h = temp_bbox[3] - temp_bbox[1]
-            gap = 6
-            row_w = prefix_w + gap + icon_w + gap + temp_w
-            row_x = max(0, (WIDTH - row_w) // 2)
-            row_y = 198
-            row_h = max(prefix_h, icon_h, temp_h)
-            prefix_y = row_y + (row_h - prefix_h) // 2 - prefix_bbox[1]
-            icon_y = row_y + (row_h - icon_h) // 2 - icon_bbox[1]
-            temp_y = row_y + (row_h - temp_h) // 2 - temp_bbox[1]
-            draw.text((row_x - prefix_bbox[0], prefix_y), next_prefix, font=FONT_PROGRESS, fill="#b8b8b8")
-            draw.text((row_x + prefix_w + gap - icon_bbox[0], icon_y), next_symbol, font=FONT_WEATHER_ICON, fill="#b8b8b8")
-            draw.text((row_x + prefix_w + gap + icon_w + gap - temp_bbox[0], temp_y), next_temp_text, font=FONT_SMALL, fill="#b8b8b8")
+            _draw_centered_row(draw, 198, [
+                ("Next hr:", FONT_PROGRESS, "#b8b8b8"),
+                (get_weather_symbol(weather.next_hour_weather_code, weather.is_day), FONT_WEATHER_ICON, "#b8b8b8"),
+                (f"{round(weather.next_hour_temp_c):.0f}C", FONT_SMALL, "#b8b8b8"),
+            ])
     else:
         text_center(draw, 152, "Weather unavailable", FONT_SMALL, fill="#888888")
 
@@ -563,7 +524,7 @@ def render_now_playing(cover: Image.Image, track: PlexTrack, elapsed_ms: Optiona
         draw.rectangle((bar_x, bar_y, bar_x + fill_w, bar_y + bar_h), fill="#f2f2f2")
         elapsed_text = format_ms(elapsed)
         total_text = format_ms(track.duration_ms)
-        time_y = bar_y - 16
+        time_y = bar_y - 17
         draw.text((bar_x, time_y), elapsed_text, font=FONT_PROGRESS, fill="#d6d6d6")
         total_w = int(draw.textlength(total_text, font=FONT_PROGRESS))
         draw.text((bar_x + bar_w - total_w, time_y), total_text, font=FONT_PROGRESS, fill="#d6d6d6")
@@ -655,17 +616,9 @@ def render_playing_frame(state: LoopState, track: PlexTrack, now_ts: float) -> N
         and now_ts >= state.next_cover_retry_ts
     )
 
-    log_debug(
-        "loop",
-        (
-            f"title={track.title!r} last_title={state.last_track_title!r} "
-            f"thumb_changed={track.thumb_path != state.last_thumb_path} "
-            f"progress_changed={progress_changed} "
-            f"toast_changed={toast_visibility_changed} "
-            f"needs_refresh={needs_refresh} needs_retry={needs_retry} "
-            f"have_cover={state.cached_cover is not None}"
-        ),
-    )
+    log_debug("loop", f"title={track.title!r} thumb={track.thumb_path != state.last_thumb_path} "
+              f"progress={progress_changed} toast={toast_visibility_changed} "
+              f"refresh={needs_refresh} retry={needs_retry} cover={state.cached_cover is not None}")
 
     if not (needs_refresh or needs_retry or progress_changed or toast_visibility_changed):
         return

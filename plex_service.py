@@ -44,6 +44,30 @@ def playback_status_text(state: str) -> str:
     return mapping.get(state, state.capitalize() if state else "Stopped")
 
 
+def _get_with_retry(
+    url: str,
+    *,
+    params: Optional[dict],
+    headers: dict,
+    timeout: int,
+    label: str,
+    log_warn: Callable[[str], None],
+    log_error: Callable[[str], None],
+):
+    for attempt in range(2):
+        try:
+            r = requests.get(url, params=params, headers=headers, timeout=timeout)
+            r.raise_for_status()
+            return r
+        except Exception as exc:
+            if attempt == 0:
+                log_warn(f"{label} failed: {exc}. Retrying...")
+                time.sleep(1)
+            else:
+                log_error(f"{label} failed after 2 attempts: {exc}")
+    return None
+
+
 def fetch_sessions_json(
     plex_server: str,
     plex_token: str,
@@ -62,25 +86,25 @@ def fetch_sessions_json(
         log_error("Missing PLEX_TOKEN")
         return None
 
-    max_retries = 2
-    for attempt in range(max_retries):
-        try:
-            r = requests.get(
-                f"{plex_server}/status/sessions",
-                params={"X-Plex-Token": plex_token},
-                headers={"Accept": "application/json"},
-                timeout=timeout,
-            )
-            r.raise_for_status()
-            return r.json()
-        except Exception as exc:
-            if attempt < max_retries - 1:
-                backoff = 2 ** attempt
-                log_warn(f"Attempt {attempt + 1}/{max_retries} failed: {exc}. Retrying in {backoff}s...")
-                time.sleep(backoff)
-            else:
-                log_error(f"Sessions failed after {max_retries} attempts: {exc}")
-    return None
+    r = _get_with_retry(
+        f"{plex_server}/status/sessions",
+        params={"X-Plex-Token": plex_token},
+        headers={"Accept": "application/json"},
+        timeout=timeout,
+        label="Sessions",
+        log_warn=log_warn,
+        log_error=log_error,
+    )
+    return r.json() if r else None
+
+
+def _to_int(v: object) -> Optional[int]:
+    if v is None:
+        return None
+    try:
+        return int(v)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
 
 
 def find_player_track(data: dict, player_name: str) -> Optional[PlexTrack]:
@@ -105,12 +129,8 @@ def find_player_track(data: dict, player_name: str) -> Optional[PlexTrack]:
             duration = item.get("duration") or media0.get("duration")
             view_offset = item.get("viewOffset")
             state = normalize_playback_state(item)
-            try:
-                duration_i = int(duration) if duration is not None else None
-                view_offset_i = int(view_offset) if view_offset is not None else None
-            except (TypeError, ValueError):
-                duration_i = None
-                view_offset_i = None
+            duration_i = _to_int(duration)
+            view_offset_i = _to_int(view_offset)
 
             player_state_raw = str(player.get("state") or "").strip().lower() or None
             session_state_raw = str(item.get("Session", {}).get("state") or "").strip().lower() or None
@@ -161,34 +181,22 @@ def fetch_cover(
 
     if not thumb_path:
         return None
-
-    max_retries = 2
-    for attempt in range(max_retries):
-        try:
-            direct_url = thumb_path if thumb_path.startswith(("http://", "https://")) else f"{plex_server}{thumb_path}"
-            params = None
-            if not thumb_path.startswith(("http://", "https://")):
-                params = {"X-Plex-Token": plex_token}
-
-            r = requests.get(
-                direct_url,
-                params=params,
-                headers={"Accept": "image/*", "X-Plex-Token": plex_token},
-                timeout=timeout,
-            )
-            r.raise_for_status()
-            img = Image.open(io.BytesIO(r.content)).convert("RGB")
-            if img.size != (width, height):
-                img = ImageOps.fit(img.convert("RGB"), (width, height), method=Image.Resampling.LANCZOS)
-            return img
-        except Exception as exc:
-            if attempt < max_retries - 1:
-                backoff = 2 ** attempt
-                log_warn(f"Cover attempt {attempt + 1}/{max_retries} failed: {exc}. Retrying in {backoff}s...")
-                time.sleep(backoff)
-            else:
-                log_error(f"Cover failed after {max_retries} attempts: {exc}")
-    return None
+    is_absolute = thumb_path.startswith(("http://", "https://"))
+    r = _get_with_retry(
+        thumb_path if is_absolute else f"{plex_server}{thumb_path}",
+        params=None if is_absolute else {"X-Plex-Token": plex_token},
+        headers={"Accept": "image/*", "X-Plex-Token": plex_token},
+        timeout=timeout,
+        label="Cover",
+        log_warn=log_warn,
+        log_error=log_error,
+    )
+    if not r:
+        return None
+    img = Image.open(io.BytesIO(r.content)).convert("RGB")
+    if img.size != (width, height):
+        img = ImageOps.fit(img.convert("RGB"), (width, height), method=Image.Resampling.LANCZOS)
+    return img
 
 
 def fetch_player_timeline_state(
@@ -232,14 +240,8 @@ def fetch_player_timeline_state(
         time_raw = timeline.attrib.get("time")
         duration_raw = timeline.attrib.get("duration")
 
-        try:
-            time_ms = int(time_raw) if time_raw is not None else None
-        except (TypeError, ValueError):
-            time_ms = None
-        try:
-            duration_ms = int(duration_raw) if duration_raw is not None else None
-        except (TypeError, ValueError):
-            duration_ms = None
+        time_ms = _to_int(time_raw)
+        duration_ms = _to_int(duration_raw)
 
         return {
             "state": state,

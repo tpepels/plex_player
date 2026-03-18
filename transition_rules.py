@@ -45,20 +45,11 @@ def _normalized_timeline_state(state: Optional[str]) -> str:
 
 
 def _track_identity(track: PlexTrack) -> str:
-    """Return a stable identity key for elapsed/progress anchoring.
-
-    Uses multiple fields because titles can repeat across albums/versions.
-    """
-
-    return "|".join(
-        [
-            str(track.title or ""),
-            str(track.artist or ""),
-            str(track.album or ""),
-            str(track.thumb_path or ""),
-            str(track.duration_ms if track.duration_ms is not None else ""),
-        ]
-    )
+    """Stable identity key for elapsed/progress anchoring."""
+    return "|".join([
+        str(track.title or ""), str(track.artist or ""), str(track.album or ""),
+        str(track.thumb_path or ""), str(track.duration_ms if track.duration_ms is not None else ""),
+    ])
 
 
 def _idle_track_from_effective_state(track: Optional[PlexTrack], effective_state: str) -> Optional[PlexTrack]:
@@ -243,6 +234,13 @@ def resolve_wait_timeout(
     return timeout
 
 
+def _safe_ms(v: object) -> Optional[int]:
+    try:
+        return max(0, int(v)) if v is not None else None  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
 def compute_display_elapsed_ms(state: LoopState, track: PlexTrack, now_ts: float) -> Optional[int]:
     """Estimate elapsed playback between coarse Plex metadata updates."""
 
@@ -253,18 +251,8 @@ def compute_display_elapsed_ms(state: LoopState, track: PlexTrack, now_ts: float
         state.elapsed_anchor_ts = now_ts
         state.last_track_identity = identity
 
-    reported_ms = track.elapsed_ms
-    if reported_ms is not None:
-        try:
-            reported_ms = max(0, int(reported_ms))
-        except (TypeError, ValueError):
-            reported_ms = None
-    duration_ms = track.duration_ms
-    if duration_ms is not None:
-        try:
-            duration_ms = max(0, int(duration_ms))
-        except (TypeError, ValueError):
-            duration_ms = None
+    reported_ms = _safe_ms(track.elapsed_ms)
+    duration_ms = _safe_ms(track.duration_ms)
 
     if reported_ms is not None:
         if state.last_reported_elapsed_ms is None or reported_ms != state.last_reported_elapsed_ms:

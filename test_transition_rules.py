@@ -26,6 +26,20 @@ class TransitionRulesTests(unittest.TestCase):
         data.update(kwargs)
         return PlexTrack(**data)
 
+    def _snapshot(self, **kwargs) -> PlaybackSnapshot:
+        data = dict(
+            now_ts=10.0, track=None, last_track_identity=None,
+            last_player_state="playing", no_track_grace_until_ts=0.0,
+            force_idle_until_ts=0.0, pending_command=None, timeline_state=None,
+        )
+        data.update(kwargs)
+        return PlaybackSnapshot(**data)
+
+    def _apply_button(self, runtime: RuntimeState, action: str, *, command_id: int = 1, now_ts: float = 100.0, confirm_timeout_seconds: float = 5.0) -> None:
+        apply_button_rules(runtime, action, command_id=command_id, now_ts=now_ts,
+                           toast_duration_seconds=0.7, stop_force_idle_seconds=4.0,
+                           confirm_timeout_seconds=confirm_timeout_seconds)
+
     def test_button_stop_sets_force_idle_and_toast(self):
         runtime = RuntimeState(current_playback_state="playing")
         apply_button_rules(
@@ -62,174 +76,91 @@ class TransitionRulesTests(unittest.TestCase):
         self.assertEqual(runtime.force_idle_until_ts, 0.0)
 
     def test_transition_force_idle_has_priority(self):
-        snapshot = PlaybackSnapshot(
-            now_ts=10.0,
+        decision = resolve_transition(self._snapshot(
             track=self._track(state="playing"),
-            last_track_identity=None,
-            last_player_state="playing",
             no_track_grace_until_ts=15.0,
             force_idle_until_ts=20.0,
-            pending_command=None,
-        )
-        decision = resolve_transition(snapshot, no_track_grace_seconds=4.0)
+        ), no_track_grace_seconds=4.0)
         self.assertEqual(decision.mode, TransitionMode.IDLE)
         self.assertEqual(decision.reason, "force_idle_window")
 
     def test_transition_playing_sets_grace_and_clears_force_idle(self):
-        snapshot = PlaybackSnapshot(
-            now_ts=10.0,
+        decision = resolve_transition(self._snapshot(
             track=self._track(state="playing"),
-            last_track_identity=None,
             last_player_state="paused",
-            no_track_grace_until_ts=0.0,
-            force_idle_until_ts=0.0,
-            pending_command=None,
-        )
-        decision = resolve_transition(snapshot, no_track_grace_seconds=4.0)
+        ), no_track_grace_seconds=4.0)
         self.assertEqual(decision.mode, TransitionMode.PLAYING)
         self.assertEqual(decision.reason, "plex_playing")
         self.assertEqual(decision.set_no_track_grace_until_ts, 14.0)
         self.assertTrue(decision.clear_force_idle)
 
     def test_transition_hold_when_transient_no_track(self):
-        snapshot = PlaybackSnapshot(
-            now_ts=10.0,
-            track=None,
-            last_track_identity=None,
-            last_player_state="playing",
+        decision = resolve_transition(self._snapshot(
             no_track_grace_until_ts=12.0,
-            force_idle_until_ts=0.0,
-            pending_command=None,
-        )
-        decision = resolve_transition(snapshot, no_track_grace_seconds=4.0)
+        ), no_track_grace_seconds=4.0)
         self.assertEqual(decision.mode, TransitionMode.HOLD)
         self.assertEqual(decision.reason, "transient_no_track_gap")
 
     def test_pending_stop_confirmed_when_not_playing(self):
         runtime = RuntimeState(current_playback_state="playing")
-        apply_button_rules(
-            runtime,
-            "stop",
-            command_id=1,
-            now_ts=100.0,
-            toast_duration_seconds=0.7,
-            stop_force_idle_seconds=4.0,
-            confirm_timeout_seconds=5.0,
-        )
-        snapshot = PlaybackSnapshot(
+        self._apply_button(runtime, "stop", command_id=1)
+        decision = resolve_transition(self._snapshot(
             now_ts=101.0,
             track=self._track(state="paused"),
-            last_track_identity=None,
-            last_player_state="playing",
-            no_track_grace_until_ts=0.0,
-            force_idle_until_ts=0.0,
             pending_command=runtime.pending_command,
-        )
-        decision = resolve_transition(snapshot, no_track_grace_seconds=4.0)
+        ), no_track_grace_seconds=4.0)
         self.assertEqual(decision.mode, TransitionMode.IDLE)
         self.assertEqual(decision.reason, "pending_stop_confirmed")
         self.assertTrue(decision.clear_pending_command)
 
     def test_pending_stop_confirmation_keeps_force_idle_window(self):
         runtime = RuntimeState(current_playback_state="playing")
-        apply_button_rules(
-            runtime,
-            "stop",
-            command_id=9,
-            now_ts=100.0,
-            toast_duration_seconds=0.7,
-            stop_force_idle_seconds=4.0,
-            confirm_timeout_seconds=5.0,
-        )
-        snapshot = PlaybackSnapshot(
+        self._apply_button(runtime, "stop", command_id=9)
+        decision = resolve_transition(self._snapshot(
             now_ts=101.0,
             track=self._track(state="paused"),
-            last_track_identity=None,
-            last_player_state="playing",
-            no_track_grace_until_ts=0.0,
             force_idle_until_ts=104.0,
             pending_command=runtime.pending_command,
-        )
-        decision = resolve_transition(snapshot, no_track_grace_seconds=4.0)
+        ), no_track_grace_seconds=4.0)
         self.assertEqual(decision.reason, "pending_stop_confirmed")
         self.assertFalse(decision.clear_force_idle)
         self.assertIsNone(decision.idle_track)
 
     def test_pending_timeout_clears_command(self):
         runtime = RuntimeState(current_playback_state="playing")
-        apply_button_rules(
-            runtime,
-            "next",
-            command_id=2,
-            now_ts=100.0,
-            toast_duration_seconds=0.7,
-            stop_force_idle_seconds=4.0,
-            confirm_timeout_seconds=1.0,
-        )
-        snapshot = PlaybackSnapshot(
+        self._apply_button(runtime, "next", command_id=2, confirm_timeout_seconds=1.0)
+        decision = resolve_transition(self._snapshot(
             now_ts=102.0,
-            track=None,
-            last_track_identity=None,
             last_player_state="idle",
-            no_track_grace_until_ts=0.0,
-            force_idle_until_ts=0.0,
             pending_command=runtime.pending_command,
-        )
-        decision = resolve_transition(snapshot, no_track_grace_seconds=4.0)
+        ), no_track_grace_seconds=4.0)
         self.assertTrue(decision.clear_pending_command)
 
     def test_pending_next_confirmed_on_track_identity_change(self):
         runtime = RuntimeState(current_playback_state="playing")
-        apply_button_rules(
-            runtime,
-            "next",
-            command_id=3,
-            now_ts=100.0,
-            toast_duration_seconds=0.7,
-            stop_force_idle_seconds=4.0,
-            confirm_timeout_seconds=5.0,
-        )
-        snapshot = PlaybackSnapshot(
+        self._apply_button(runtime, "next", command_id=3)
+        decision = resolve_transition(self._snapshot(
             now_ts=101.0,
             track=self._track(title="Song B", state="playing"),
             last_track_identity="Song A|Artist|Album|/thumb|100000",
-            last_player_state="playing",
-            no_track_grace_until_ts=0.0,
-            force_idle_until_ts=0.0,
             pending_command=runtime.pending_command,
-        )
-        decision = resolve_transition(snapshot, no_track_grace_seconds=4.0)
+        ), no_track_grace_seconds=4.0)
         self.assertEqual(decision.mode, TransitionMode.PLAYING)
         self.assertTrue(decision.clear_pending_command)
 
     def test_timeline_none_forces_idle_without_track_payload(self):
-        snapshot = PlaybackSnapshot(
-            now_ts=10.0,
+        decision = resolve_transition(self._snapshot(
             track=self._track(state="playing"),
-            last_track_identity=None,
-            last_player_state="playing",
-            no_track_grace_until_ts=0.0,
-            force_idle_until_ts=0.0,
-            pending_command=None,
             timeline_state="none",
-        )
-        decision = resolve_transition(snapshot, no_track_grace_seconds=4.0)
+        ), no_track_grace_seconds=4.0)
         self.assertEqual(decision.mode, TransitionMode.IDLE)
         self.assertEqual(decision.reason, "timeline_not_playing")
         self.assertIsNone(decision.idle_track)
 
     def test_near_end_stale_playing_maps_to_idle_without_track(self):
-        snapshot = PlaybackSnapshot(
-            now_ts=10.0,
+        decision = resolve_transition(self._snapshot(
             track=self._track(state="playing", elapsed_ms=98_700, duration_ms=100_000),
-            last_track_identity=None,
-            last_player_state="playing",
-            no_track_grace_until_ts=0.0,
-            force_idle_until_ts=0.0,
-            pending_command=None,
-            timeline_state=None,
-        )
-        decision = resolve_transition(snapshot, no_track_grace_seconds=4.0)
+        ), no_track_grace_seconds=4.0)
         self.assertEqual(decision.mode, TransitionMode.IDLE)
         self.assertEqual(decision.reason, "default_idle")
         self.assertIsNone(decision.idle_track)
