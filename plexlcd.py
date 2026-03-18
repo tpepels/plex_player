@@ -348,6 +348,16 @@ def text_center(draw: ImageDraw.ImageDraw, y: int, text: str, font, fill="white"
     draw.text((x, y), text, font=font, fill=fill)
 
 
+def _draw_centered_row(draw: ImageDraw.ImageDraw, y: int, parts) -> None:
+    """Draw a centered row composed of mixed text segments and fonts."""
+
+    widths = [int(draw.textlength(text, font=font)) for text, font, _ in parts]
+    x = max(0, (WIDTH - sum(widths)) // 2)
+    for (text, font, fill), w in zip(parts, widths):
+        draw.text((x, y), text, font=font, fill=fill)
+        x += w
+
+
 def draw_button_labels(
     img: Image.Image,
     fill: str = "#d8d8d8",
