@@ -10,6 +10,28 @@ import os
 from dataclasses import dataclass
 from zoneinfo import ZoneInfo
 
+from core.constants import (
+    DEFAULT_BUTTON_BOUNCE_TIME,
+    DEFAULT_BUTTON_LABEL_NEXT_Y_PERCENT,
+    DEFAULT_BUTTON_LABEL_PLAY_Y_PERCENT,
+    DEFAULT_BUTTON_LABEL_STOP_Y_PERCENT,
+    DEFAULT_BUTTON_NEXT_PIN,
+    DEFAULT_BUTTON_PLAY_PAUSE_PIN,
+    DEFAULT_BUTTON_STOP_PIN,
+    DEFAULT_DISPLAY_X_SHIFT,
+    DEFAULT_FB_DEVICE,
+    DEFAULT_HEIGHT,
+    DEFAULT_NO_TRACK_GRACE_SECONDS,
+    DEFAULT_PLAYER_NAME,
+    DEFAULT_PLEX_SERVER,
+    DEFAULT_POLL_SECONDS,
+    DEFAULT_PROGRESS_UPDATE_SECONDS,
+    DEFAULT_TIMEZONE,
+    DEFAULT_WEATHER_REFRESH_SECONDS,
+    DEFAULT_WIDTH,
+    TRUTHY_ENV_VALUES,
+)
+
 
 @dataclass
 class Config:
@@ -73,32 +95,32 @@ class Config:
 
         def parse_bool(name: str, default: str) -> bool:
             raw = getenv(name, default).strip().lower()
-            return raw in {"1", "true", "yes", "on"}
+            return raw in TRUTHY_ENV_VALUES
 
         cfg = cls(
-            plex_server=getenv("PLEX_SERVER", "http://plex.local:32400").strip().rstrip("/"),
+            plex_server=getenv("PLEX_SERVER", DEFAULT_PLEX_SERVER).strip().rstrip("/"),
             plex_token=getenv("PLEX_TOKEN", "").strip(),
-            player_name=getenv("PLAYER_NAME", "Plexamp Pi Zero").strip(),
+            player_name=getenv("PLAYER_NAME", DEFAULT_PLAYER_NAME).strip(),
             latitude=parse_float("LATITUDE", "0.0000"),
             longitude=parse_float("LONGITUDE", "0.0000"),
-            timezone=getenv("TIMEZONE", "UTC").strip(),
+            timezone=getenv("TIMEZONE", DEFAULT_TIMEZONE).strip(),
             location_name=getenv("LOCATION_NAME", "").strip(),
-            fb_device=getenv("FB_DEVICE", "/dev/fb1").strip(),
-            width=parse_int("WIDTH", "320"),
-            height=parse_int("HEIGHT", "240"),
+            fb_device=getenv("FB_DEVICE", DEFAULT_FB_DEVICE).strip(),
+            width=parse_int("WIDTH", str(DEFAULT_WIDTH)),
+            height=parse_int("HEIGHT", str(DEFAULT_HEIGHT)),
             buttons_enabled=parse_bool("BUTTONS_ENABLED", "0"),
-            button_play_pause_pin=parse_int("BUTTON_PLAY_PAUSE_PIN", "23"),
-            button_stop_pin=parse_int("BUTTON_STOP_PIN", "24"),
-            button_next_pin=parse_int("BUTTON_NEXT_PIN", "25"),
-            button_bounce_time=parse_float("BUTTON_BOUNCE_TIME", "0.15"),
-            button_label_play_y_percent=parse_int("BUTTON_LABEL_PLAY_Y_PERCENT", "20"),
-            button_label_stop_y_percent=parse_int("BUTTON_LABEL_STOP_Y_PERCENT", "40"),
-            button_label_next_y_percent=parse_int("BUTTON_LABEL_NEXT_Y_PERCENT", "60"),
-            poll_seconds=parse_int("POLL_SECONDS", "3"),
-            weather_refresh_seconds=parse_int("WEATHER_REFRESH_SECONDS", "900"),
-            progress_update_seconds=parse_int("PROGRESS_UPDATE_SECONDS", "3"),
-            no_track_grace_seconds=parse_float("NO_TRACK_GRACE_SECONDS", "4.0"),
-            display_x_shift=parse_int("DISPLAY_X_SHIFT", "0"),
+            button_play_pause_pin=parse_int("BUTTON_PLAY_PAUSE_PIN", str(DEFAULT_BUTTON_PLAY_PAUSE_PIN)),
+            button_stop_pin=parse_int("BUTTON_STOP_PIN", str(DEFAULT_BUTTON_STOP_PIN)),
+            button_next_pin=parse_int("BUTTON_NEXT_PIN", str(DEFAULT_BUTTON_NEXT_PIN)),
+            button_bounce_time=parse_float("BUTTON_BOUNCE_TIME", str(DEFAULT_BUTTON_BOUNCE_TIME)),
+            button_label_play_y_percent=parse_int("BUTTON_LABEL_PLAY_Y_PERCENT", str(DEFAULT_BUTTON_LABEL_PLAY_Y_PERCENT)),
+            button_label_stop_y_percent=parse_int("BUTTON_LABEL_STOP_Y_PERCENT", str(DEFAULT_BUTTON_LABEL_STOP_Y_PERCENT)),
+            button_label_next_y_percent=parse_int("BUTTON_LABEL_NEXT_Y_PERCENT", str(DEFAULT_BUTTON_LABEL_NEXT_Y_PERCENT)),
+            poll_seconds=parse_int("POLL_SECONDS", str(DEFAULT_POLL_SECONDS)),
+            weather_refresh_seconds=parse_int("WEATHER_REFRESH_SECONDS", str(DEFAULT_WEATHER_REFRESH_SECONDS)),
+            progress_update_seconds=parse_int("PROGRESS_UPDATE_SECONDS", str(DEFAULT_PROGRESS_UPDATE_SECONDS)),
+            no_track_grace_seconds=parse_float("NO_TRACK_GRACE_SECONDS", str(DEFAULT_NO_TRACK_GRACE_SECONDS)),
+            display_x_shift=parse_int("DISPLAY_X_SHIFT", str(DEFAULT_DISPLAY_X_SHIFT)),
             debug_logging=parse_bool("DEBUG_LOGGING", "0"),
         )
 

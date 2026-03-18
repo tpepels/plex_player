@@ -14,7 +14,7 @@ from typing import Callable, Optional
 import requests
 from PIL import Image, ImageOps
 
-from models import PlexTrack
+from core.models import PlexTrack
 
 
 def normalize_playback_state(item: dict) -> str:

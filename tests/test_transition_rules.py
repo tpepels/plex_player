@@ -1,7 +1,12 @@
 import unittest
 
-from models import LoopState, PlaybackSnapshot, PlexTrack, RuntimeState, TransitionDecision, TransitionMode
-from transition_rules import (
+from core import (
+    LoopState,
+    PlaybackSnapshot,
+    PlexTrack,
+    RuntimeState,
+    TransitionDecision,
+    TransitionMode,
     apply_button_rules,
     apply_transition_decision,
     compute_display_elapsed_ms,

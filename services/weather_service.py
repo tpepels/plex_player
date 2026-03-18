@@ -11,7 +11,7 @@ from typing import Callable, Optional
 
 import requests
 
-from models import WeatherInfo
+from core.models import WeatherInfo
 
 WEATHER_CODES = {
     0: "Clear",

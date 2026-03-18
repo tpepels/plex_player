@@ -96,14 +96,18 @@ Other useful optional keys:
 
 Code layout:
 
-- `plexlcd.py`: app entrypoint, render loop orchestration, framebuffer output, GPIO wiring.
-- `config.py`: env parsing + validation (`Config.from_env`).
-- `models.py`: shared dataclasses (`WeatherInfo`, `PlexTrack`, `LoopState`).
-- `transition_rules.py`: explicit rule engine (`apply_button_rules`, `resolve_transition`, elapsed interpolation rule).
+- `plexlcd.py`: app entrypoint and render loop orchestration.
+- `core/config.py`: env parsing + validation (`Config.from_env`).
+- `core/models.py`: shared dataclasses (`WeatherInfo`, `PlexTrack`, `LoopState`).
+- `core/transition_rules.py`: explicit rule engine (`apply_button_rules`, `resolve_transition`, elapsed interpolation rule).
   - Includes policy helpers (`should_poll_timeline`) and reducer-style side effect application (`apply_transition_decision`) so orchestration avoids inline state mutations.
-- `test_transition_rules.py`: unit tests for rule precedence, button intent, and elapsed interpolation edge cases.
-- `plex_service.py`: Plex API/session parsing, cover fetch, playback command dispatch.
-- `weather_service.py`: weather API fetch + weather labels/symbols.
+- `core/render_policy.py`: redraw/invalidation policies.
+- `core/display_adapter.py`: framebuffer output + fallback display helpers.
+- `core/button_controller.py`: GPIO button wiring + command dispatch policy.
+- `core/playback_collector.py`: session/timeline collection and snapshot assembly.
+- `services/plex_service.py`: Plex API/session parsing, cover fetch, playback command dispatch.
+- `services/weather_service.py`: weather API fetch + weather labels/symbols.
+- `tests/test_transition_rules.py`: unit tests for rule precedence, button intent, and elapsed interpolation edge cases.
 
 Runtime assumptions:
 

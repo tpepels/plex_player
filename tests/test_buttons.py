@@ -10,14 +10,17 @@ Press Ctrl+C to quit.
 """
 
 import os
-import sys
 import time
 
 # ---------------------------------------------------------------------------
 # Load .env
 # ---------------------------------------------------------------------------
 script_dir = os.path.dirname(os.path.abspath(__file__))
-env_path = os.path.join(script_dir, ".env")
+env_candidates = [
+    os.path.join(script_dir, ".env"),
+    os.path.join(os.path.dirname(script_dir), ".env"),
+]
+env_path = next((p for p in env_candidates if os.path.isfile(p)), env_candidates[0])
 if os.path.isfile(env_path):
     with open(env_path, encoding="utf-8") as f:
         for raw in f:
@@ -46,30 +49,13 @@ print(f"[env] PLEX_SERVER={PLEX_SERVER}")
 print(f"[env] PLEX_TOKEN={'SET' if PLEX_TOKEN else 'MISSING'}")
 print(f"[env] Pins: {PINS}  bounce={BOUNCE}s")
 
-# ---------------------------------------------------------------------------
-# Check gpiozero
-# ---------------------------------------------------------------------------
 try:
-    from gpiozero import Button
-    print("[gpio] gpiozero imported OK")
-except ImportError as e:
-    print(f"[gpio] FAILED to import gpiozero: {e}")
-    print("       Install with:  sudo apt install python3-gpiozero")
-    sys.exit(1)
-
-# ---------------------------------------------------------------------------
-# Check pin factory (running without hardware will raise here)
-# ---------------------------------------------------------------------------
-try:
+    from gpiozero import Button, Device
     from gpiozero.pins.rpigpio import RPiGPIOFactory
-    from gpiozero import Device
-    factory = RPiGPIOFactory()
-    Device.pin_factory = factory
-    print("[gpio] RPiGPIO pin factory set OK")
-except Exception as e:
-    print(f"[gpio] RPiGPIO factory not available ({e}); falling back to default factory")
-    print("       If you are NOT on a Pi this will fail. If you ARE on a Pi, try:")
-    print("       sudo apt install python3-rpi.gpio")
+except ImportError:
+    Button = None
+    Device = None
+    RPiGPIOFactory = None
 
 # ---------------------------------------------------------------------------
 # Plex test helper
@@ -131,33 +117,52 @@ def get_target_client_id() -> tuple[str | None, str | None, int]:
         print(f"[plex]  Sessions fetch error: {exc}")
     return None, None, 32500
 
+def main() -> int:
+    if Button is None:
+        print("[gpio] FAILED to import gpiozero")
+        print("       Install with:  sudo apt install python3-gpiozero")
+        return 1
 
-print()
-print("[plex] Fetching current session to get target client id …")
-target_id, player_addr, player_port = get_target_client_id()
-
-# ---------------------------------------------------------------------------
-# Set up buttons
-# ---------------------------------------------------------------------------
-buttons = []
-print()
-print("[gpio] Setting up buttons …")
-for pin, action in PINS.items():
+    print("[gpio] gpiozero imported OK")
     try:
-        btn = Button(pin, pull_up=True, bounce_time=BOUNCE)
-        def _handler(a=action, p=pin):
-            print(f"\n*** GPIO PIN {p} PRESSED  action={a} ***")
-            test_plex_command(a, player_addr, player_port)
-        btn.when_pressed = _handler
-        buttons.append(btn)
-        print(f"[gpio] Pin {pin} → {action}  OK")
+        if Device is not None and RPiGPIOFactory is not None:
+            Device.pin_factory = RPiGPIOFactory()
+            print("[gpio] RPiGPIO pin factory set OK")
     except Exception as e:
-        print(f"[gpio] Pin {pin} FAILED: {e}")
+        print(f"[gpio] RPiGPIO factory not available ({e}); falling back to default factory")
+        print("       If you are NOT on a Pi this will fail. If you ARE on a Pi, try:")
+        print("       sudo apt install python3-rpi.gpio")
 
-print()
-print("Ready. Press a physical button (Ctrl+C to quit) …")
-try:
-    while True:
-        time.sleep(0.1)
-except KeyboardInterrupt:
-    print("\n[test] Done.")
+    print()
+    print("[plex] Fetching current session to get target client id …")
+    _, player_addr, player_port = get_target_client_id()
+
+    buttons = []
+    print()
+    print("[gpio] Setting up buttons …")
+    for pin, action in PINS.items():
+        try:
+            btn = Button(pin, pull_up=True, bounce_time=BOUNCE)
+
+            def _handler(a=action, p=pin):
+                print(f"\n*** GPIO PIN {p} PRESSED  action={a} ***")
+                test_plex_command(a, player_addr, player_port)
+
+            btn.when_pressed = _handler
+            buttons.append(btn)
+            print(f"[gpio] Pin {pin} → {action}  OK")
+        except Exception as e:
+            print(f"[gpio] Pin {pin} FAILED: {e}")
+
+    print()
+    print("Ready. Press a physical button (Ctrl+C to quit) …")
+    try:
+        while True:
+            time.sleep(0.1)
+    except KeyboardInterrupt:
+        print("\n[test] Done.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

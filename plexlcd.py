@@ -21,25 +21,71 @@ from datetime import datetime
 from typing import Optional
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
-from config import Config
-from models import LoopState, PlaybackSnapshot, PlexTrack, RuntimeState, TransitionMode, WeatherInfo
-from plex_service import (
+from core import (
+    ButtonControllerConfig,
+    Config,
+    DisplayAdapterConfig,
+    DisplayAdapterLogger,
+    LoopState,
+    PlaybackCollectorConfig,
+    PlaybackCollectorDeps,
+    PlexTrack,
+    RuntimeState,
+    TransitionMode,
+    WeatherInfo,
+    apply_button_rules,
+    apply_transition_decision,
+    collect_playback_snapshot,
+    commit_idle_render_state,
+    commit_playing_render_state,
+    create_error_placeholder as display_create_error_placeholder,
+    dispatch_playback_command,
+    resolve_idle_render_plan,
+    resolve_playing_render_plan,
+    resolve_transition,
+    resolve_wait_timeout,
+    setup_gpio_buttons as setup_button_devices,
+    should_poll_timeline,
+    try_write_framebuffer,
+    write_fallback_placeholder,
+    DEFAULT_BUTTON_BOUNCE_TIME,
+    DEFAULT_BUTTON_LABEL_NEXT_Y_PERCENT,
+    DEFAULT_BUTTON_LABEL_PLAY_Y_PERCENT,
+    DEFAULT_BUTTON_LABEL_STOP_Y_PERCENT,
+    DEFAULT_BUTTON_NEXT_PIN,
+    DEFAULT_BUTTON_PLAY_PAUSE_PIN,
+    DEFAULT_BUTTON_STOP_PIN,
+    DEFAULT_COMMAND_CONFIRM_SECONDS,
+    DEFAULT_COVER_RETRY_SECONDS,
+    DEFAULT_DISPLAY_X_SHIFT,
+    DEFAULT_FB_DEVICE,
+    DEFAULT_FONT_BOLD_CANDIDATES,
+    DEFAULT_FONT_REGULAR_CANDIDATES,
+    DEFAULT_FONT_SYMBOLS_CANDIDATES,
+    DEFAULT_HEIGHT,
+    DEFAULT_HTTP_TIMEOUT,
+    DEFAULT_NO_TRACK_GRACE_SECONDS,
+    DEFAULT_PLAYER_NAME,
+    DEFAULT_PLEX_SERVER,
+    DEFAULT_POLL_SECONDS,
+    DEFAULT_PROGRESS_UPDATE_SECONDS,
+    DEFAULT_TIMEZONE,
+    DEFAULT_TOAST_DURATION_SECONDS,
+    DEFAULT_WEATHER_REFRESH_SECONDS,
+    DEFAULT_WIDTH,
+    TRUTHY_ENV_VALUES,
+)
+from services import (
+    WEATHER_CODES,
     fetch_cover,
     fetch_player_timeline_state,
     fetch_sessions_json,
+    fetch_weather,
     find_player_track,
+    get_weather_symbol,
     playback_status_text,
     send_playback_command,
 )
-from transition_rules import (
-    apply_button_rules,
-    apply_transition_decision,
-    compute_display_elapsed_ms,
-    resolve_transition,
-    resolve_wait_timeout,
-    should_poll_timeline,
-)
-from weather_service import WEATHER_CODES, fetch_weather, get_weather_symbol
 from zoneinfo import ZoneInfo
 
 try:
@@ -90,35 +136,35 @@ def env(name: str, default: str) -> str:
 
 # Runtime defaults (overridden by validated Config in validate_startup)
 # Assumption: these defaults are safe placeholders before validated config is applied.
-PLEX_SERVER = env("PLEX_SERVER", "http://plex.local:32400").rstrip("/")
+PLEX_SERVER = env("PLEX_SERVER", DEFAULT_PLEX_SERVER).rstrip("/")
 PLEX_TOKEN = env("PLEX_TOKEN", "")
-PLAYER_NAME = env("PLAYER_NAME", "Plexamp Pi Zero")
+PLAYER_NAME = env("PLAYER_NAME", DEFAULT_PLAYER_NAME)
 LATITUDE = 0.0
 LONGITUDE = 0.0
-TIMEZONE = env("TIMEZONE", "UTC")
+TIMEZONE = env("TIMEZONE", DEFAULT_TIMEZONE)
 LOCATION_NAME = env("LOCATION_NAME", "").strip()
-FB_DEVICE = env("FB_DEVICE", "/dev/fb1")
-WIDTH = 320
-HEIGHT = 240
+FB_DEVICE = env("FB_DEVICE", DEFAULT_FB_DEVICE)
+WIDTH = DEFAULT_WIDTH
+HEIGHT = DEFAULT_HEIGHT
 BUTTONS_ENABLED = False
-BUTTON_PLAY_PAUSE_PIN = 23
-BUTTON_STOP_PIN = 24
-BUTTON_NEXT_PIN = 25
-BUTTON_BOUNCE_TIME = 0.15
-BUTTON_LABEL_PLAY_Y_PERCENT = 20
-BUTTON_LABEL_STOP_Y_PERCENT = 40
-BUTTON_LABEL_NEXT_Y_PERCENT = 60
-POLL_SECONDS = 3
-WEATHER_REFRESH_SECONDS = 900
-PROGRESS_UPDATE_SECONDS = 3
-DISPLAY_X_SHIFT = 0
+BUTTON_PLAY_PAUSE_PIN = DEFAULT_BUTTON_PLAY_PAUSE_PIN
+BUTTON_STOP_PIN = DEFAULT_BUTTON_STOP_PIN
+BUTTON_NEXT_PIN = DEFAULT_BUTTON_NEXT_PIN
+BUTTON_BOUNCE_TIME = DEFAULT_BUTTON_BOUNCE_TIME
+BUTTON_LABEL_PLAY_Y_PERCENT = DEFAULT_BUTTON_LABEL_PLAY_Y_PERCENT
+BUTTON_LABEL_STOP_Y_PERCENT = DEFAULT_BUTTON_LABEL_STOP_Y_PERCENT
+BUTTON_LABEL_NEXT_Y_PERCENT = DEFAULT_BUTTON_LABEL_NEXT_Y_PERCENT
+POLL_SECONDS = DEFAULT_POLL_SECONDS
+WEATHER_REFRESH_SECONDS = DEFAULT_WEATHER_REFRESH_SECONDS
+PROGRESS_UPDATE_SECONDS = DEFAULT_PROGRESS_UPDATE_SECONDS
+DISPLAY_X_SHIFT = DEFAULT_DISPLAY_X_SHIFT
 CONTROLLER_CLIENT_ID = env("CONTROLLER_CLIENT_ID", f"plexlcd-{socket.gethostname()}")
-DEBUG_LOGGING = env("DEBUG_LOGGING", "0").strip().lower() in {"1", "true", "yes", "on"}
-HTTP_TIMEOUT = 10
-COVER_RETRY_SECONDS = 20
-TOAST_DURATION_SECONDS = 0.7
-NO_TRACK_GRACE_SECONDS = 4.0
-COMMAND_CONFIRM_SECONDS = 5.0
+DEBUG_LOGGING = env("DEBUG_LOGGING", "0").strip().lower() in TRUTHY_ENV_VALUES
+HTTP_TIMEOUT = DEFAULT_HTTP_TIMEOUT
+COVER_RETRY_SECONDS = DEFAULT_COVER_RETRY_SECONDS
+TOAST_DURATION_SECONDS = DEFAULT_TOAST_DURATION_SECONDS
+NO_TRACK_GRACE_SECONDS = DEFAULT_NO_TRACK_GRACE_SECONDS
+COMMAND_CONFIRM_SECONDS = DEFAULT_COMMAND_CONFIRM_SECONDS
 BUTTON_DEVICES = []
 RUNTIME_STATE = RuntimeState()
 REFRESH_EVENT = threading.Event()
@@ -135,19 +181,15 @@ def first_existing_font(*candidates: str) -> str:
 
 FONT_PATH_REGULAR = first_existing_font(
     env("FONT_PATH_REGULAR", ""),
-    "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    *DEFAULT_FONT_REGULAR_CANDIDATES,
 )
 FONT_PATH_BOLD = first_existing_font(
     env("FONT_PATH_BOLD", ""),
-    "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    *DEFAULT_FONT_BOLD_CANDIDATES,
 )
 FONT_PATH_SYMBOLS = first_existing_font(
     env("FONT_PATH_SYMBOLS", ""),
-    "/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf",
-    "/usr/share/fonts/truetype/noto/NotoSansSymbols-Regular.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    *DEFAULT_FONT_SYMBOLS_CANDIDATES,
 )
 
 
@@ -253,82 +295,50 @@ def validate_startup():
     log_message("startup", "Configuration validated successfully")
 
 
-def next_command_id() -> int:
-    """Return monotonically increasing command id for Plex playback endpoints."""
-    with COMMAND_COUNTER_LOCK:
-        RUNTIME_STATE.command_counter += 1
-        return RUNTIME_STATE.command_counter
+def button_controller_config() -> ButtonControllerConfig:
+    return ButtonControllerConfig(
+        buttons_enabled=BUTTONS_ENABLED,
+        play_pause_pin=BUTTON_PLAY_PAUSE_PIN,
+        stop_pin=BUTTON_STOP_PIN,
+        next_pin=BUTTON_NEXT_PIN,
+        bounce_time=BUTTON_BOUNCE_TIME,
+        plex_server=PLEX_SERVER,
+        plex_token=PLEX_TOKEN,
+        controller_client_id=CONTROLLER_CLIENT_ID,
+        http_timeout=HTTP_TIMEOUT,
+        toast_duration_seconds=TOAST_DURATION_SECONDS,
+        no_track_grace_seconds=NO_TRACK_GRACE_SECONDS,
+        command_confirm_seconds=COMMAND_CONFIRM_SECONDS,
+    )
 
 
 def send_plex_playback_command(action: str):
     """Send a playback command to the active Plexamp player."""
-    # Assumption: toasts reflect the intended action immediately after accepted request.
-    cmd_id = next_command_id()
-    sent_ok = send_playback_command(
-        action=action,
-        plex_server=PLEX_SERVER,
-        plex_token=PLEX_TOKEN,
-        controller_client_id=CONTROLLER_CLIENT_ID,
-        target_client_id=RUNTIME_STATE.current_target_client_id,
-        player_addr=RUNTIME_STATE.current_player_address,
-        player_port=RUNTIME_STATE.current_player_port,
-        command_id=cmd_id,
-        timeout=HTTP_TIMEOUT,
+    dispatch_playback_command(
+        action,
+        config=button_controller_config(),
+        runtime_state=RUNTIME_STATE,
+        refresh_event=REFRESH_EVENT,
+        command_counter_lock=COMMAND_COUNTER_LOCK,
+        send_playback_request=send_playback_command,
+        apply_button_rules=apply_button_rules,
         log_info=lambda msg: log_message("buttons", msg, level="INFO", stderr=True),
         log_warn=lambda msg: log_message("buttons", msg, level="WARN", stderr=True),
         log_debug=lambda msg: log_debug("buttons", msg),
         log_error=lambda msg: log_message("buttons", msg, level="ERROR", stderr=True),
     )
-    if sent_ok:
-        apply_button_rules(
-            RUNTIME_STATE,
-            action,
-            command_id=cmd_id,
-            now_ts=time.monotonic(),
-            toast_duration_seconds=TOAST_DURATION_SECONDS,
-            stop_force_idle_seconds=max(2.0, NO_TRACK_GRACE_SECONDS),
-            confirm_timeout_seconds=COMMAND_CONFIRM_SECONDS,
-        )
-        REFRESH_EVENT.set()
 
 
 def setup_gpio_buttons():
     """Initialize GPIO button callbacks when hardware buttons are enabled."""
-    # Assumption: gpiozero handles debouncing; callback should stay lightweight.
-    global BUTTON_DEVICES
-    if not BUTTONS_ENABLED:
-        return
-    if Button is None:
-        return
-
-    buttons = [
-        ("play_pause", BUTTON_PLAY_PAUSE_PIN),
-        ("stop", BUTTON_STOP_PIN),
-        ("next", BUTTON_NEXT_PIN),
-    ]
-
-    for action, pin in buttons:
-        button = Button(pin, pull_up=True, bounce_time=BUTTON_BOUNCE_TIME)
-        def _make_handler(action_name, pin_no):
-            def handler():
-                print(f"[buttons] GPIO pin {pin_no} pressed → action={action_name}  client_id={RUNTIME_STATE.current_target_client_id!r}", file=sys.stderr, flush=True)
-                send_plex_playback_command(action_name)
-            return handler
-        button.when_pressed = _make_handler(action, pin)
-        BUTTON_DEVICES.append(button)
-
-    log_message(
-        "buttons",
-        f"Enabled GPIO buttons: play/pause={BUTTON_PLAY_PAUSE_PIN}, stop={BUTTON_STOP_PIN}, next={BUTTON_NEXT_PIN}",
+    setup_button_devices(
+        button_class=Button,
+        button_devices=BUTTON_DEVICES,
+        runtime_state=RUNTIME_STATE,
+        config=button_controller_config(),
+        dispatch_action=send_plex_playback_command,
+        log_message=lambda msg: log_message("buttons", msg, level="INFO", stderr=True),
     )
-
-
-def create_error_placeholder(text: str = "Display Error") -> Image.Image:
-    """Create a fallback image when cover/rendering fails."""
-    img = Image.new("RGB", (WIDTH, HEIGHT), "black")
-    draw = ImageDraw.Draw(img)
-    text_center(draw, (HEIGHT - 20) // 2, text, FONT_SMALL, fill="#ff6666")
-    return img
 
 
 def text_center(draw: ImageDraw.ImageDraw, y: int, text: str, font, fill="white"):
@@ -340,7 +350,6 @@ def text_center(draw: ImageDraw.ImageDraw, y: int, text: str, font, fill="white"
 
 def draw_button_labels(
     img: Image.Image,
-    y: int,
     fill: str = "#d8d8d8",
     is_playing: bool = False,
     visible_actions: Optional[tuple[str, ...]] = None,
@@ -402,50 +411,6 @@ def fit_cover(img: Image.Image, w: int, h: int) -> Image.Image:
     return ImageOps.fit(img.convert("RGB"), (w, h), method=Image.Resampling.LANCZOS)
 
 
-def apply_display_shift(img: Image.Image) -> Image.Image:
-    """Apply small horizontal correction for framebuffer driver panel offsets."""
-    if DISPLAY_X_SHIFT == 0:
-        return img
-    shifted = Image.new("RGB", (WIDTH, HEIGHT), "black")
-    shifted.paste(img, (DISPLAY_X_SHIFT, 0))
-    return shifted
-
-
-def rgb888_to_rgb565_bytes(img: Image.Image) -> bytes:
-    """Convert RGB888 PIL image to little-endian RGB565 byte buffer for framebuffer."""
-
-    if img.mode != "RGB":
-        img = img.convert("RGB")
-    raw = img.tobytes()
-    out = bytearray(WIDTH * HEIGHT * 2)
-    for i in range(WIDTH * HEIGHT):
-        r, g, b = raw[i * 3], raw[i * 3 + 1], raw[i * 3 + 2]
-        v = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
-        out[i * 2] = v & 0xFF
-        out[i * 2 + 1] = v >> 8
-    return bytes(out)
-
-
-def write_framebuffer(img: Image.Image):
-    """Write final rendered frame to framebuffer device."""
-
-    try:
-        raw = rgb888_to_rgb565_bytes(apply_display_shift(img))
-        with open(FB_DEVICE, "wb", buffering=0) as fb:
-            fb.write(raw)
-    except PermissionError:
-        print(f"[framebuffer] Permission denied writing to {FB_DEVICE}. Need root or video group membership.", file=sys.stderr)
-
-            overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
-            od = ImageDraw.Draw(overlay)
-            tmp = ImageDraw.Draw(img)
-            for _, label, label_y in button_items:
-                bbox = tmp.textbbox((x, label_y), label, font=FONT_LABEL)
-                cx, cy = (bbox[0] + bbox[2]) // 2, (bbox[1] + bbox[3]) // 2
-                od.ellipse((cx - 10, cy - 10, cx + 10, cy + 10), fill=(0, 0, 0, 120))
-            img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
-            draw = ImageDraw.Draw(img)
-
 # Rendering pipeline for idle and now-playing screens
 def render_idle(
     weather: Optional[WeatherInfo],
@@ -487,7 +452,6 @@ def render_idle(
 
     img = draw_button_labels(
         img,
-        0,
         fill="#8f8f8f",
         is_playing=False,
         visible_actions=idle_actions,
@@ -531,28 +495,10 @@ def render_now_playing(cover: Image.Image, track: PlexTrack, elapsed_ms: Optiona
 
     img = draw_button_labels(
         composed,
-        0,
         is_playing=True,
         visible_actions=("play_pause", "stop", "next"),
     )
     return draw_toast(img)
-
-
-def try_write_framebuffer(img: Image.Image, *, context: str) -> bool:
-    """Write image to framebuffer and report errors consistently."""
-    try:
-        write_framebuffer(img)
-        return True
-    except Exception as exc:
-        log_exception("framebuffer", f"Failed during {context}", exc)
-        return False
-
-
-def write_fallback_placeholder(text: str, *, context: str) -> None:
-    """Best-effort write of a fallback error image."""
-    img = create_error_placeholder(text)
-    if not try_write_framebuffer(img, context=f"{context} placeholder"):
-        log_message("framebuffer", f"Unable to display fallback placeholder for: {context}", level="ERROR", stderr=True)
 
 
 # Main loop orchestration helpers
@@ -571,59 +517,30 @@ def refresh_weather_if_due(state: LoopState, now_ts: float) -> None:
         state.last_weather_fetch = now_ts
 
 
-def update_current_player_context(track: Optional[PlexTrack]) -> None:
-    """Update globals used by button handlers from latest track context."""
-    if track:
-        RUNTIME_STATE.current_target_client_id = track.target_client_identifier
-        RUNTIME_STATE.current_player_address = track.player_address
-        RUNTIME_STATE.current_player_port = track.player_port
-        RUNTIME_STATE.current_playback_state = track.state
-    else:
-        # Preserve last known player endpoint for direct timeline polling.
-        RUNTIME_STATE.current_playback_state = "unknown"
-
-
 def render_playing_frame(state: LoopState, track: PlexTrack, now_ts: float) -> None:
     """Render now-playing state, refreshing cover art only when needed."""
 
-    def _commit_playing_frame_state(next_retry_ts: float) -> None:
-        state.last_thumb_path = track.thumb_path
-        state.last_track_title = track.title
-        state.last_player_state = "playing"
-        state.last_elapsed_second = progress_bucket
-        state.last_toast_visible = toast_visible
-        state.next_cover_retry_ts = next_retry_ts
-
-    # Assumption: cover art is expensive enough to cache between loop cycles.
-    needs_refresh = (
-        track.thumb_path != state.last_thumb_path
-        or track.title != state.last_track_title
-        or state.last_player_state != "playing"
-    )
-    display_elapsed_ms = compute_display_elapsed_ms(state, track, now_ts)
-    elapsed_second = (display_elapsed_ms // 1000) if display_elapsed_ms is not None else None
-    progress_bucket = (
-        elapsed_second // PROGRESS_UPDATE_SECONDS
-        if elapsed_second is not None and PROGRESS_UPDATE_SECONDS > 0
-        else None
-    )
-    progress_changed = progress_bucket != state.last_elapsed_second
-    toast_visible = toast_is_visible(now_ts)
-    toast_visibility_changed = toast_visible != state.last_toast_visible
-    needs_retry = (
-        not state.cached_cover
-        and track.thumb_path == state.last_thumb_path
-        and now_ts >= state.next_cover_retry_ts
+    display_config = DisplayAdapterConfig(FB_DEVICE, WIDTH, HEIGHT, DISPLAY_X_SHIFT)
+    display_logger = DisplayAdapterLogger(
+        log_exception=log_exception,
+        log_message=lambda component, message: log_message(component, message, level="ERROR", stderr=True),
     )
 
-    log_debug("loop", f"title={track.title!r} thumb={track.thumb_path != state.last_thumb_path} "
-              f"progress={progress_changed} toast={toast_visibility_changed} "
-              f"refresh={needs_refresh} retry={needs_retry} cover={state.cached_cover is not None}")
+    plan = resolve_playing_render_plan(
+        state,
+        track,
+        now_ts,
+        progress_update_seconds=PROGRESS_UPDATE_SECONDS,
+        toast_visible=toast_is_visible(now_ts),
+    )
+    log_debug("loop", f"title={track.title!r} thumb={plan.thumb_changed} progress={plan.progress_changed} "
+              f"toast={plan.toast_changed} refresh={plan.needs_refresh} retry={plan.needs_retry} "
+              f"cover={state.cached_cover is not None}")
 
-    if not (needs_refresh or needs_retry or progress_changed or toast_visibility_changed):
+    if not plan.should_render:
         return
 
-    if track.thumb_path != state.last_thumb_path:
+    if plan.thumb_changed:
         state.cached_cover = None
 
     if not state.cached_cover and track.thumb_path:
@@ -640,57 +557,70 @@ def render_playing_frame(state: LoopState, track: PlexTrack, now_ts: float) -> N
 
     if state.cached_cover:
         if try_write_framebuffer(
-            render_now_playing(state.cached_cover, track, elapsed_ms=display_elapsed_ms),
+            render_now_playing(state.cached_cover, track, elapsed_ms=plan.display_elapsed_ms),
             context="now-playing render",
+            config=display_config,
+            logger=display_logger,
         ):
-            _commit_playing_frame_state(0.0)
+            commit_playing_render_state(state, track, plan, next_retry_ts=0.0)
             return
-        write_fallback_placeholder("Render Error", context="now-playing render")
+        write_fallback_placeholder(
+            "Render Error",
+            context="now-playing render",
+            font=FONT_SMALL,
+            config=display_config,
+            logger=display_logger,
+        )
         return
 
     next_retry_ts = now_ts + COVER_RETRY_SECONDS
-    if try_write_framebuffer(create_error_placeholder("No Album Art"), context="no-album-art render"):
-        _commit_playing_frame_state(next_retry_ts)
+    if try_write_framebuffer(
+        display_create_error_placeholder(WIDTH, HEIGHT, "No Album Art", FONT_SMALL),
+        context="no-album-art render",
+        config=display_config,
+        logger=display_logger,
+    ):
+        commit_playing_render_state(state, track, plan, next_retry_ts=next_retry_ts)
     else:
         state.next_cover_retry_ts = next_retry_ts
-
-
-def reset_idle_render_cache(state: LoopState, minute_key: str, idle_state: str, toast_visible: bool) -> None:
-    """Reset transient now-playing cache when idle frame becomes authoritative."""
-
-    state.last_idle_minute = minute_key
-    state.last_player_state = idle_state
-    state.last_thumb_path = None
-    state.last_track_title = None
-    state.last_track_identity = None
-    state.last_elapsed_second = None
-    state.last_reported_elapsed_ms = None
-    state.elapsed_anchor_ms = None
-    state.elapsed_anchor_ts = 0.0
-    state.last_toast_visible = toast_visible
-    state.cached_cover = None
-    state.next_cover_retry_ts = 0.0
 
 
 def render_idle_frame(state: LoopState, track: Optional[PlexTrack]) -> None:
     """Render idle/paused/stopped screen when minute or state changes."""
     # Assumption: minute-level redraw cadence is sufficient for clock in idle mode.
+    display_config = DisplayAdapterConfig(FB_DEVICE, WIDTH, HEIGHT, DISPLAY_X_SHIFT)
+    display_logger = DisplayAdapterLogger(
+        log_exception=log_exception,
+        log_message=lambda component, message: log_message(component, message, level="ERROR", stderr=True),
+    )
     minute_key = datetime.now(ZoneInfo(TIMEZONE)).strftime("%Y-%m-%d %H:%M")
-    idle_state = track.state if track else "unknown"
-    status_text = playback_status_text(idle_state) if idle_state == "paused" else None
-    toast_visible = toast_is_visible()
+    plan = resolve_idle_render_plan(
+        state,
+        minute_key,
+        track,
+        playback_status_text(track.state) if track and track.state == "paused" else None,
+        toast_is_visible(),
+    )
 
-    if minute_key == state.last_idle_minute and state.last_player_state == idle_state and toast_visible == state.last_toast_visible:
+    if not plan.should_render:
         return
 
     if try_write_framebuffer(
-        render_idle(state.last_weather, playback_status=status_text, playback_state=idle_state),
+        render_idle(state.last_weather, playback_status=plan.status_text, playback_state=plan.idle_state),
         context="idle render",
+        config=display_config,
+        logger=display_logger,
     ):
-        reset_idle_render_cache(state, minute_key, idle_state, toast_visible)
+        commit_idle_render_state(state, plan)
         return
 
-    write_fallback_placeholder("Display Error", context="idle render")
+    write_fallback_placeholder(
+        "Display Error",
+        context="idle render",
+        font=FONT_SMALL,
+        config=display_config,
+        logger=display_logger,
+    )
 
 
 def wait_for_next_cycle(state: LoopState) -> None:
@@ -731,49 +661,32 @@ def main():
     setup_gpio_buttons()
 
     state = LoopState()
+    collector_config = PlaybackCollectorConfig(PLAYER_NAME, PLEX_SERVER, PLEX_TOKEN, HTTP_TIMEOUT)
+    collector_deps = PlaybackCollectorDeps(
+        fetch_sessions_json=fetch_sessions_json,
+        find_player_track=find_player_track,
+        fetch_player_timeline_state=fetch_player_timeline_state,
+        should_poll_timeline=should_poll_timeline,
+        log_warn=lambda msg: log_message("plex", msg, level="WARN", stderr=True),
+        log_error=lambda msg: log_message("plex", msg, level="ERROR", stderr=True),
+    )
 
     while True:
         try:
             now_ts = time.monotonic()
             refresh_weather_if_due(state, now_ts)
 
-            sessions = fetch_sessions_json(
-                plex_server=PLEX_SERVER,
-                plex_token=PLEX_TOKEN,
-                timeout=HTTP_TIMEOUT,
-                log_warn=lambda msg: log_message("plex", msg, level="WARN", stderr=True),
-                log_error=lambda msg: log_message("plex", msg, level="ERROR", stderr=True),
-            )
-            track = find_player_track(sessions, PLAYER_NAME) if sessions else None
-            update_current_player_context(track)
-            timeline_state: Optional[str] = None
-
-            # Collect direct Plexamp timeline state as additional rule input.
-            if should_poll_timeline(track, state.last_player_state):
-                timeline = fetch_player_timeline_state(
-                    player_addr=RUNTIME_STATE.current_player_address,
-                    player_port=RUNTIME_STATE.current_player_port,
-                    plex_token=PLEX_TOKEN,
-                    timeout=HTTP_TIMEOUT,
-                    log_warn=lambda msg: log_message("plex", msg, level="WARN", stderr=True),
-                )
-                if timeline:
-                    timeline_state = str(timeline.get("state") or "").strip().lower() or None
-
-            snapshot = PlaybackSnapshot(
+            collected = collect_playback_snapshot(
                 now_ts=now_ts,
-                track=track,
-                last_track_identity=state.last_track_identity,
-                last_player_state=state.last_player_state,
-                no_track_grace_until_ts=state.no_track_grace_until_ts,
-                force_idle_until_ts=RUNTIME_STATE.force_idle_until_ts,
-                pending_command=RUNTIME_STATE.pending_command,
-                timeline_state=timeline_state,
+                loop_state=state,
+                runtime_state=RUNTIME_STATE,
+                config=collector_config,
+                deps=collector_deps,
             )
-            decision = resolve_transition(snapshot, no_track_grace_seconds=NO_TRACK_GRACE_SECONDS)
+            decision = resolve_transition(collected.snapshot, no_track_grace_seconds=NO_TRACK_GRACE_SECONDS)
             apply_transition_decision(RUNTIME_STATE, state, decision)
 
-            render_from_transition(state, decision.mode, track, now_ts, decision.idle_track)
+            render_from_transition(state, decision.mode, collected.track, now_ts, decision.idle_track)
 
         except KeyboardInterrupt:
             raise

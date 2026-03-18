@@ -6,7 +6,7 @@ This module contains policy decisions only; rendering and I/O stay elsewhere.
 from typing import Optional
 from dataclasses import replace
 
-from models import LoopState, PendingCommand, PlaybackSnapshot, PlexTrack, RuntimeState, TransitionDecision, TransitionMode
+from core.models import LoopState, PendingCommand, PlaybackSnapshot, PlexTrack, RuntimeState, TransitionDecision, TransitionMode
 
 
 def _normalized_state(track: Optional[PlexTrack]) -> str:
