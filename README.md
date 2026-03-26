@@ -10,11 +10,14 @@ When nothing is playing, it shows a clock and weather.
 Run these commands from this folder:
 
 ```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 chmod +x setup_plexlcd.sh
 ./setup_plexlcd.sh install
 ./setup_plexlcd.sh configure
 ./setup_plexlcd.sh test
-python3 plexlcd.py
+.venv/bin/python plexlcd.py
 ```
 
 If everything looks good, install it as a service:
@@ -95,6 +98,8 @@ make test
 make lint
 make run
 ```
+
+`make` targets use `.venv/bin/python` by default.
 
 ## Troubleshooting
 

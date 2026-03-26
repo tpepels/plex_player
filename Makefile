@@ -1,6 +1,6 @@
 .PHONY: test lint run
 
-PYTHON ?= python3
+PYTHON ?= .venv/bin/python
 
 test:
 	$(PYTHON) -m unittest -q

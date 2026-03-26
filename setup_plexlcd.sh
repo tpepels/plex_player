@@ -6,6 +6,23 @@ APP_DIR="$SCRIPT_DIR"
 ENV_FILE="$SCRIPT_DIR/.env"
 SERVICE_FILE="/etc/systemd/system/plexlcd.service"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+VENV_DIR="$APP_DIR/.venv"
+VENV_PYTHON="$VENV_DIR/bin/python"
+
+ensure_venv() {
+  if [[ ! -x "$VENV_PYTHON" ]]; then
+    log "Creating virtual environment at $VENV_DIR"
+    "$PYTHON_BIN" -m venv "$VENV_DIR"
+  fi
+
+  log "Installing/updating Python dependencies in .venv"
+  "$VENV_PYTHON" -m pip install --upgrade pip >/dev/null
+  if [[ -f "$APP_DIR/requirements.txt" ]]; then
+    "$VENV_PYTHON" -m pip install -r "$APP_DIR/requirements.txt"
+  else
+    "$VENV_PYTHON" -m pip install requests pillow numpy
+  fi
+}
 
 log() {
   printf '\n[%s] %s\n' "$(date '+%H:%M:%S')" "$*"
@@ -30,6 +47,8 @@ install_packages() {
   $SUDO apt-get install -y \
     python3 python3-pip python3-venv python3-requests python3-pil python3-gpiozero \
     curl jq fonts-dejavu-core fonts-noto-core fbset fbi
+
+  ensure_venv
 }
 
 prepare_local_files() {
@@ -301,10 +320,9 @@ install_service() {
     return 1
   fi
 
-  local python_exec
-  python_exec="$(command -v "$PYTHON_BIN" || true)"
-  if [[ -z "$python_exec" ]]; then
-    log "Python executable '$PYTHON_BIN' not found"
+  ensure_venv
+  if [[ ! -x "$VENV_PYTHON" ]]; then
+    log "Virtual environment Python not found at $VENV_PYTHON"
     return 1
   fi
 
@@ -321,7 +339,7 @@ Type=simple
 User=root
 WorkingDirectory=$APP_DIR
 EnvironmentFile=$ENV_FILE
-ExecStart=$python_exec $APP_DIR/plexlcd.py
+ExecStart=$VENV_PYTHON $APP_DIR/plexlcd.py
 Restart=always
 RestartSec=5
 
@@ -341,6 +359,7 @@ Usage: $(basename "$0") [command]
 Commands:
   help            Show token/player-name instructions
   install         Install dependencies
+  venv            Create/update .venv and install Python dependencies
   configure       Guided setup (minimal prompts + optional advanced)
   test            Test Plex connectivity and list players from current sessions
   fb              Show framebuffer devices
@@ -363,6 +382,7 @@ main() {
   case "$cmd" in
     help) show_token_help ;;
     install) install_packages; prepare_local_files ;;
+    venv) ensure_venv ;;
     configure) write_env ;;
     test) test_plex ;;
     fb) show_framebuffers ;;
