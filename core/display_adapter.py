@@ -1,10 +1,19 @@
 """Framebuffer output helpers and fallback display handling."""
 
 from dataclasses import dataclass
+import hashlib
 import sys
 from typing import Callable
 
 from PIL import Image, ImageDraw
+
+try:
+    import numpy as np
+except Exception:
+    np = None
+
+
+_LAST_FRAME_HASH: bytes | None = None
 
 
 @dataclass(frozen=True)
@@ -41,6 +50,19 @@ def apply_display_shift(img: Image.Image, *, width: int, height: int, display_x_
 def rgb888_to_rgb565_bytes(img: Image.Image, *, width: int, height: int) -> bytes:
     if img.mode != "RGB":
         img = img.convert("RGB")
+
+    if np is not None:
+        arr = np.asarray(img, dtype=np.uint8)
+        if arr.ndim == 3 and arr.shape[2] == 3:
+            r = arr[:, :, 0].astype(np.uint16)
+            g = arr[:, :, 1].astype(np.uint16)
+            b = arr[:, :, 2].astype(np.uint16)
+            v = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
+            out = np.empty((height, width, 2), dtype=np.uint8)
+            out[:, :, 0] = (v & 0xFF).astype(np.uint8)
+            out[:, :, 1] = (v >> 8).astype(np.uint8)
+            return out.tobytes()
+
     raw = img.tobytes()
     out = bytearray(width * height * 2)
     for i in range(width * height):
@@ -52,14 +74,21 @@ def rgb888_to_rgb565_bytes(img: Image.Image, *, width: int, height: int) -> byte
 
 
 def write_framebuffer(img: Image.Image, *, config: DisplayAdapterConfig) -> None:
+    global _LAST_FRAME_HASH
     try:
         raw = rgb888_to_rgb565_bytes(
             apply_display_shift(img, width=config.width, height=config.height, display_x_shift=config.display_x_shift),
             width=config.width,
             height=config.height,
         )
+
+        frame_hash = hashlib.blake2b(raw, digest_size=16).digest()
+        if frame_hash == _LAST_FRAME_HASH:
+            return
+
         with open(config.fb_device, "wb", buffering=0) as fb:
             fb.write(raw)
+        _LAST_FRAME_HASH = frame_hash
     except PermissionError:
         print(f"[framebuffer] Permission denied writing to {config.fb_device}. Need root or video group membership.", file=sys.stderr)
 

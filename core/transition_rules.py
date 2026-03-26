@@ -109,9 +109,9 @@ def apply_button_rules(
 def should_poll_timeline(track: Optional[PlexTrack], last_player_state: Optional[str]) -> bool:
     """Policy helper to decide whether direct timeline polling is useful this cycle."""
 
-    if track and str(track.state or "").strip().lower() == "playing":
+    if track and str(track.state or "").strip().lower() in {"playing", "paused"}:
         return True
-    return str(last_player_state or "").strip().lower() == "playing"
+    return str(last_player_state or "").strip().lower() in {"playing", "paused"}
 
 
 def resolve_transition(snapshot: PlaybackSnapshot, *, no_track_grace_seconds: float) -> TransitionDecision:
@@ -227,8 +227,11 @@ def resolve_wait_timeout(
     """Resolve loop wait timeout from explicit timing rules."""
 
     timeout = max(0.1, float(poll_seconds))
-    if str(last_player_state or "").strip().lower() == "playing":
+    player_state = str(last_player_state or "").strip().lower()
+    if player_state == "playing":
         timeout = min(timeout, max(1.0, float(progress_update_seconds)))
+    elif player_state in {"paused", "stopped", "unknown", "none", ""}:
+        timeout = max(timeout, float(poll_seconds) * 2.0)
     if toast_remaining_seconds is not None:
         timeout = min(timeout, max(0.0, float(toast_remaining_seconds)))
     return timeout
