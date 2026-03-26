@@ -157,6 +157,8 @@ BUTTON_LABEL_NEXT_Y_PERCENT = DEFAULT_BUTTON_LABEL_NEXT_Y_PERCENT
 POLL_SECONDS = DEFAULT_POLL_SECONDS
 WEATHER_REFRESH_SECONDS = DEFAULT_WEATHER_REFRESH_SECONDS
 PROGRESS_UPDATE_SECONDS = DEFAULT_PROGRESS_UPDATE_SECONDS
+TIMELINE_POLL_MIN_INTERVAL_SECONDS = float(env("TIMELINE_POLL_MIN_INTERVAL_SECONDS", "8"))
+LOW_POWER_COVER_RENDER = env("LOW_POWER_COVER_RENDER", "1").strip().lower() in TRUTHY_ENV_VALUES
 DISPLAY_X_SHIFT = DEFAULT_DISPLAY_X_SHIFT
 CONTROLLER_CLIENT_ID = env("CONTROLLER_CLIENT_ID", f"plexlcd-{socket.gethostname()}")
 DEBUG_LOGGING = env("DEBUG_LOGGING", "0").strip().lower() in TRUTHY_ENV_VALUES
@@ -446,7 +448,8 @@ def truncate(draw: ImageDraw.ImageDraw, text: str, font, max_width: int) -> str:
 
 
 def fit_cover(img: Image.Image, w: int, h: int) -> Image.Image:
-    return ImageOps.fit(img.convert("RGB"), (w, h), method=Image.Resampling.LANCZOS)
+    method = Image.Resampling.BILINEAR if LOW_POWER_COVER_RENDER else Image.Resampling.LANCZOS
+    return ImageOps.fit(img.convert("RGB"), (w, h), method=method)
 
 
 # Rendering pipeline for idle and now-playing screens
@@ -709,11 +712,15 @@ def main():
         log_warn=lambda msg: log_message("plex", msg, level="WARN", stderr=True),
         log_error=lambda msg: log_message("plex", msg, level="ERROR", stderr=True),
     )
+    last_timeline_poll_ts = 0.0
 
     while True:
         try:
             now_ts = time.monotonic()
             refresh_weather_if_due(state, now_ts)
+
+            timeline_interval = max(1.0, float(TIMELINE_POLL_MIN_INTERVAL_SECONDS))
+            timeline_due = (now_ts - last_timeline_poll_ts) >= timeline_interval
 
             collected = collect_playback_snapshot(
                 now_ts=now_ts,
@@ -721,7 +728,10 @@ def main():
                 runtime_state=RUNTIME_STATE,
                 config=collector_config,
                 deps=collector_deps,
+                enable_timeline_poll=timeline_due,
             )
+            if collected.snapshot.timeline_state is not None:
+                last_timeline_poll_ts = now_ts
             decision = resolve_transition(collected.snapshot, no_track_grace_seconds=NO_TRACK_GRACE_SECONDS)
             apply_transition_decision(RUNTIME_STATE, state, decision)
 

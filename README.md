@@ -85,6 +85,8 @@ Useful optional values:
 - `BUTTONS_ENABLED` and button pin values
 - `DEBUG_LOGGING=1` (more logs)
 - `PROGRESS_UPDATE_SECONDS` (higher value lowers CPU while playing; try `8` to `12` on Pi Zero-class devices)
+- `TIMELINE_POLL_MIN_INTERVAL_SECONDS` (minimum seconds between direct timeline polls while playing, default `8`)
+- `LOW_POWER_COVER_RENDER=1` (use cheaper cover-art scaling to reduce CPU on album page)
 
 ## Daily Commands
 

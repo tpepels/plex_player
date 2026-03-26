@@ -47,6 +47,7 @@ def collect_playback_snapshot(
     runtime_state: RuntimeState,
     config: PlaybackCollectorConfig,
     deps: PlaybackCollectorDeps,
+    enable_timeline_poll: bool = True,
 ) -> CollectedPlayback:
     sessions = deps.fetch_sessions_json(
         plex_server=config.plex_server,
@@ -59,7 +60,7 @@ def collect_playback_snapshot(
     update_current_player_context(runtime_state, track)
 
     timeline_state: Optional[str] = None
-    if deps.should_poll_timeline(track, loop_state.last_player_state):
+    if enable_timeline_poll and deps.should_poll_timeline(track, loop_state.last_player_state):
         timeline = deps.fetch_player_timeline_state(
             player_addr=runtime_state.current_player_address,
             player_port=runtime_state.current_player_port,
