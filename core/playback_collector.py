@@ -30,6 +30,27 @@ class CollectedPlayback:
     snapshot: PlaybackSnapshot
 
 
+def _should_force_timeline_poll(
+    track: Optional[PlexTrack],
+    *,
+    last_player_state: Optional[str],
+    min_interval_seconds: float,
+) -> bool:
+    """Bypass normal timeline throttling for queue-end and track-gap edges."""
+
+    if not track:
+        return str(last_player_state or "").strip().lower() == "playing"
+
+    if str(track.state or "").strip().lower() != "playing":
+        return False
+    if track.duration_ms is None or track.elapsed_ms is None:
+        return False
+
+    remaining_ms = max(0, int(track.duration_ms) - int(track.elapsed_ms))
+    threshold_ms = max(1500, int(max(0.0, float(min_interval_seconds)) * 1000))
+    return remaining_ms <= threshold_ms
+
+
 def update_current_player_context(runtime_state: RuntimeState, track: Optional[PlexTrack]) -> None:
     if track:
         runtime_state.current_target_client_id = track.target_client_identifier
@@ -48,6 +69,8 @@ def collect_playback_snapshot(
     config: PlaybackCollectorConfig,
     deps: PlaybackCollectorDeps,
     enable_timeline_poll: bool = True,
+    last_timeline_poll_ts: float = 0.0,
+    timeline_poll_min_interval_seconds: float = 0.0,
 ) -> CollectedPlayback:
     sessions = deps.fetch_sessions_json(
         plex_server=config.plex_server,
@@ -60,7 +83,19 @@ def collect_playback_snapshot(
     update_current_player_context(runtime_state, track)
 
     timeline_state: Optional[str] = None
-    if enable_timeline_poll and deps.should_poll_timeline(track, loop_state.last_player_state):
+    timeline_due = enable_timeline_poll
+    if (
+        not timeline_due
+        and _should_force_timeline_poll(
+            track,
+            last_player_state=loop_state.last_player_state,
+            min_interval_seconds=timeline_poll_min_interval_seconds,
+        )
+    ):
+        elapsed = max(0.0, float(now_ts) - float(last_timeline_poll_ts))
+        timeline_due = elapsed < max(0.0, float(timeline_poll_min_interval_seconds))
+
+    if timeline_due and deps.should_poll_timeline(track, loop_state.last_player_state):
         timeline = deps.fetch_player_timeline_state(
             player_addr=runtime_state.current_player_address,
             player_port=runtime_state.current_player_port,

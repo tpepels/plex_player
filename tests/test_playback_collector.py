@@ -75,6 +75,69 @@ class PlaybackCollectorTests(unittest.TestCase):
         self.assertIsNone(collected.snapshot.timeline_state)
         self.assertEqual(runtime.current_playback_state, "unknown")
 
+    def test_collect_forces_timeline_poll_when_track_is_near_end(self):
+        runtime = RuntimeState()
+        loop_state = LoopState(last_player_state="playing")
+        track = self._track(elapsed_ms=96_500, duration_ms=100_000)
+        timeline_calls = 0
+
+        def fetch_timeline(**kwargs):
+            nonlocal timeline_calls
+            timeline_calls += 1
+            return {"state": "none"}
+
+        collected = collect_playback_snapshot(
+            now_ts=10.0,
+            loop_state=loop_state,
+            runtime_state=runtime,
+            config=PlaybackCollectorConfig("Player", "http://plex.local:32400", "token", 10),
+            deps=PlaybackCollectorDeps(
+                fetch_sessions_json=lambda **kwargs: {"ok": True},
+                find_player_track=lambda data, player_name: track,
+                fetch_player_timeline_state=fetch_timeline,
+                should_poll_timeline=lambda track, last_player_state: True,
+                log_warn=lambda msg: None,
+                log_error=lambda msg: None,
+            ),
+            enable_timeline_poll=False,
+            last_timeline_poll_ts=9.0,
+            timeline_poll_min_interval_seconds=8.0,
+        )
+
+        self.assertEqual(timeline_calls, 1)
+        self.assertEqual(collected.snapshot.timeline_state, "none")
+
+    def test_collect_forces_timeline_poll_when_session_disappears_after_playing(self):
+        runtime = RuntimeState(current_player_address="192.168.1.20", current_player_port=32500)
+        loop_state = LoopState(last_player_state="playing")
+        timeline_calls = 0
+
+        def fetch_timeline(**kwargs):
+            nonlocal timeline_calls
+            timeline_calls += 1
+            return {"state": "none"}
+
+        collected = collect_playback_snapshot(
+            now_ts=10.0,
+            loop_state=loop_state,
+            runtime_state=runtime,
+            config=PlaybackCollectorConfig("Player", "http://plex.local:32400", "token", 10),
+            deps=PlaybackCollectorDeps(
+                fetch_sessions_json=lambda **kwargs: None,
+                find_player_track=lambda data, player_name: None,
+                fetch_player_timeline_state=fetch_timeline,
+                should_poll_timeline=lambda track, last_player_state: True,
+                log_warn=lambda msg: None,
+                log_error=lambda msg: None,
+            ),
+            enable_timeline_poll=False,
+            last_timeline_poll_ts=9.0,
+            timeline_poll_min_interval_seconds=8.0,
+        )
+
+        self.assertEqual(timeline_calls, 1)
+        self.assertEqual(collected.snapshot.timeline_state, "none")
+
 
 if __name__ == "__main__":
     unittest.main()

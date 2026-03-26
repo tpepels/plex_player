@@ -729,6 +729,8 @@ def main():
                 config=collector_config,
                 deps=collector_deps,
                 enable_timeline_poll=timeline_due,
+                last_timeline_poll_ts=last_timeline_poll_ts,
+                timeline_poll_min_interval_seconds=timeline_interval,
             )
             if collected.snapshot.timeline_state is not None:
                 last_timeline_poll_ts = now_ts
