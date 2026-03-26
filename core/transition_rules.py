@@ -109,9 +109,9 @@ def apply_button_rules(
 def should_poll_timeline(track: Optional[PlexTrack], last_player_state: Optional[str]) -> bool:
     """Policy helper to decide whether direct timeline polling is useful this cycle."""
 
-    if track and str(track.state or "").strip().lower() in {"playing", "paused"}:
+    if track and str(track.state or "").strip().lower() == "playing":
         return True
-    return str(last_player_state or "").strip().lower() in {"playing", "paused"}
+    return str(last_player_state or "").strip().lower() == "playing"
 
 
 def resolve_transition(snapshot: PlaybackSnapshot, *, no_track_grace_seconds: float) -> TransitionDecision:
