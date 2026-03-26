@@ -169,6 +169,7 @@ BUTTON_DEVICES = []
 RUNTIME_STATE = RuntimeState()
 REFRESH_EVENT = threading.Event()
 COMMAND_COUNTER_LOCK = threading.Lock()
+DISPLAY_RETRY_SECONDS = 60
 
 
 # Font lookup helpers
@@ -207,6 +208,33 @@ def log_debug(component: str, message: str) -> None:
 
 def log_exception(component: str, context: str, exc: Exception, *, level: str = "ERROR") -> None:
     log_message(component, f"{context}: {exc}", level=level, stderr=True)
+
+
+def display_is_available() -> bool:
+    """Return True when framebuffer device appears to be present and writable."""
+
+    if not os.path.exists(FB_DEVICE):
+        return False
+    try:
+        with open(FB_DEVICE, "ab", buffering=0):
+            return True
+    except (PermissionError, OSError):
+        return False
+
+
+def wait_for_display() -> None:
+    """Block until a framebuffer device is available, checking once per minute."""
+
+    while not display_is_available():
+        log_message(
+            "startup",
+            f"No display detected at {FB_DEVICE}; retrying in {DISPLAY_RETRY_SECONDS} seconds",
+            level="WARN",
+            stderr=True,
+        )
+        time.sleep(DISPLAY_RETRY_SECONDS)
+
+    log_message("startup", f"Display detected at {FB_DEVICE}")
 
 
 # State normalization and UI label helpers
@@ -668,6 +696,7 @@ def main():
     """Main app loop: fetch state, render frame, and sleep/wake for next cycle."""
     # Assumption: top-level loop must be resilient; all recoverable errors are logged and retried.
     validate_startup()
+    wait_for_display()
     setup_gpio_buttons()
 
     state = LoopState()
