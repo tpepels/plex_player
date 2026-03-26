@@ -84,6 +84,7 @@ Useful optional values:
 - `DISPLAY_X_SHIFT` (panel alignment tweak)
 - `BUTTONS_ENABLED` and button pin values
 - `DEBUG_LOGGING=1` (more logs)
+- `PROGRESS_UPDATE_SECONDS` (higher value lowers CPU while playing; try `8` to `12` on Pi Zero-class devices)
 
 ## Daily Commands
 
