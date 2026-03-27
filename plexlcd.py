@@ -135,19 +135,25 @@ def env(name: str, default: str) -> str:
     return os.environ.get(name, default)
 
 
-STARTUP_TRACE_FILE = os.environ.get("PLEXLCD_STARTUP_LOG", "/tmp/plexlcd-startup.log")
+_STARTUP_TRACE_TRUTHY = {"1", "true", "yes", "on", "y"}
+STARTUP_TRACE_ENABLED = env("PLEXLCD_STARTUP_TRACE", "0").strip().lower() in _STARTUP_TRACE_TRUTHY
+STARTUP_TRACE_FILE = os.environ.get("PLEXLCD_STARTUP_LOG", "").strip()
 
 
 def startup_trace(message: str) -> None:
-    """Best-effort startup tracing for environments where journald misses app stderr."""
+    """Best-effort startup tracing for startup debugging (opt-in)."""
+
+    if not STARTUP_TRACE_ENABLED:
+        return
 
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     line = f"{ts} {message}"
-    try:
-        with open(STARTUP_TRACE_FILE, "a", encoding="utf-8") as f:
-            f.write(line + "\n")
-    except Exception:
-        pass
+    if STARTUP_TRACE_FILE:
+        try:
+            with open(STARTUP_TRACE_FILE, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+        except Exception:
+            pass
     print(line, file=sys.stderr, flush=True)
 
 
@@ -167,6 +173,11 @@ def env_float(name: str, default: str) -> float:
     try:
         return float(raw)
     except (TypeError, ValueError):
+        print(
+            f"[startup] [WARN] Invalid float for {name}={raw!r}; using default {default}",
+            file=sys.stderr,
+            flush=True,
+        )
         startup_trace(f"[startup] [WARN] Invalid float for {name}={raw!r}; using default {default}")
         return float(default)
 
@@ -204,11 +215,30 @@ COVER_RETRY_SECONDS = DEFAULT_COVER_RETRY_SECONDS
 TOAST_DURATION_SECONDS = DEFAULT_TOAST_DURATION_SECONDS
 NO_TRACK_GRACE_SECONDS = DEFAULT_NO_TRACK_GRACE_SECONDS
 COMMAND_CONFIRM_SECONDS = DEFAULT_COMMAND_CONFIRM_SECONDS
+POWER_SAVE_MODE = env("POWER_SAVE_MODE", "0").strip().lower() in TRUTHY_ENV_VALUES
 BUTTON_DEVICES = []
 RUNTIME_STATE = RuntimeState()
 REFRESH_EVENT = threading.Event()
 COMMAND_COUNTER_LOCK = threading.Lock()
 DISPLAY_RETRY_SECONDS = 60
+
+
+def apply_power_save_tunings() -> None:
+    """Raise loop/network intervals to reduce CPU and wakeups on constrained devices."""
+
+    global POLL_SECONDS
+    global WEATHER_REFRESH_SECONDS
+    global PROGRESS_UPDATE_SECONDS
+    global TIMELINE_POLL_MIN_INTERVAL_SECONDS
+    global COVER_RETRY_SECONDS
+    global LOW_POWER_COVER_RENDER
+
+    POLL_SECONDS = max(float(POLL_SECONDS), 6.0)
+    WEATHER_REFRESH_SECONDS = max(float(WEATHER_REFRESH_SECONDS), 1800.0)
+    PROGRESS_UPDATE_SECONDS = max(float(PROGRESS_UPDATE_SECONDS), 12.0)
+    TIMELINE_POLL_MIN_INTERVAL_SECONDS = max(float(TIMELINE_POLL_MIN_INTERVAL_SECONDS), 15.0)
+    COVER_RETRY_SECONDS = max(float(COVER_RETRY_SECONDS), 45.0)
+    LOW_POWER_COVER_RENDER = True
 
 
 # Font lookup helpers
@@ -360,6 +390,15 @@ def validate_startup():
         "NO_TRACK_GRACE_SECONDS", "DISPLAY_X_SHIFT", "DEBUG_LOGGING",
     )
     globals().update({f: getattr(cfg, f.lower()) for f in _fields})
+
+    if POWER_SAVE_MODE:
+        apply_power_save_tunings()
+        log_message(
+            "startup",
+            "POWER_SAVE_MODE enabled (slower polling, reduced render cost)",
+            level="INFO",
+            stderr=True,
+        )
 
     log_message("startup", "Configuration validated successfully")
 
@@ -812,6 +851,8 @@ if __name__ == "__main__":
     except SystemExit:
         raise
     except Exception as exc:
+        log_exception("startup", "Fatal startup error", exc)
         startup_trace_exception("[startup] [ERROR] Fatal startup error", exc)
-        traceback.print_exc()
+        if STARTUP_TRACE_ENABLED:
+            traceback.print_exc()
         raise

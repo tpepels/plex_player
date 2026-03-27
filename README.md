@@ -90,6 +90,9 @@ Useful optional values:
 - `PROGRESS_UPDATE_SECONDS` (higher value lowers CPU while playing; try `8` to `12` on Pi Zero-class devices)
 - `TIMELINE_POLL_MIN_INTERVAL_SECONDS` (minimum seconds between direct timeline polls while playing, default `8`)
 - `LOW_POWER_COVER_RENDER=1` (use cheaper cover-art scaling to reduce CPU on album page)
+- `POWER_SAVE_MODE=1` (aggressive low-power profile: slower polling, fewer wakeups, reduced render cost)
+- `PLEXLCD_STARTUP_TRACE=1` (enable detailed startup trace logs while debugging service restarts)
+- `PLEXLCD_STARTUP_LOG=/tmp/plexlcd-startup.log` (trace file path when startup tracing is enabled)
 
 ## Daily Commands
 

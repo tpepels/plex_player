@@ -1,6 +1,6 @@
 .PHONY: test lint run
 
-PYTHON ?= .venv/bin/python
+PYTHON ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 
 test:
 	$(PYTHON) -m unittest -q
