@@ -134,6 +134,21 @@ def env(name: str, default: str) -> str:
     return os.environ.get(name, default)
 
 
+def env_float(name: str, default: str) -> float:
+    """Parse float env var safely at import-time, with fallback and stderr warning."""
+
+    raw = env(name, default).strip()
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        print(
+            f"[startup] [WARN] Invalid float for {name}={raw!r}; using default {default}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return float(default)
+
+
 # Runtime defaults (overridden by validated Config in validate_startup)
 # Assumption: these defaults are safe placeholders before validated config is applied.
 PLEX_SERVER = env("PLEX_SERVER", DEFAULT_PLEX_SERVER).rstrip("/")
@@ -157,7 +172,7 @@ BUTTON_LABEL_NEXT_Y_PERCENT = DEFAULT_BUTTON_LABEL_NEXT_Y_PERCENT
 POLL_SECONDS = DEFAULT_POLL_SECONDS
 WEATHER_REFRESH_SECONDS = DEFAULT_WEATHER_REFRESH_SECONDS
 PROGRESS_UPDATE_SECONDS = DEFAULT_PROGRESS_UPDATE_SECONDS
-TIMELINE_POLL_MIN_INTERVAL_SECONDS = float(env("TIMELINE_POLL_MIN_INTERVAL_SECONDS", "8"))
+TIMELINE_POLL_MIN_INTERVAL_SECONDS = env_float("TIMELINE_POLL_MIN_INTERVAL_SECONDS", "8")
 LOW_POWER_COVER_RENDER = env("LOW_POWER_COVER_RENDER", "1").strip().lower() in TRUTHY_ENV_VALUES
 DISPLAY_X_SHIFT = DEFAULT_DISPLAY_X_SHIFT
 CONTROLLER_CLIENT_ID = env("CONTROLLER_CLIENT_ID", f"plexlcd-{socket.gethostname()}")
@@ -761,4 +776,13 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        raise
+    except Exception as exc:
+        print(f"[startup] [ERROR] Fatal startup error: {exc}", file=sys.stderr, flush=True)
+        import traceback
+
+        traceback.print_exc()
+        raise
