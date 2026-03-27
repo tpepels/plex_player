@@ -453,6 +453,9 @@ def setup_gpio_buttons():
         # Auto mode tries commonly working factories before falling back to gpiozero default.
         selected_factory = os.environ.get("GPIOZERO_PIN_FACTORY", "").strip().lower()
         if selected_factory in {"", "auto"}:
+            # gpiozero itself does not recognize "auto" as a pin-factory name.
+            # Remove the env override so our explicit Device.pin_factory selection is honored.
+            os.environ.pop("GPIOZERO_PIN_FACTORY", None)
             chosen = None
             try:
                 from gpiozero import Device
