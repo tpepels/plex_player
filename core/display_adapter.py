@@ -2,7 +2,6 @@
 
 from dataclasses import dataclass
 import hashlib
-import sys
 from typing import Callable
 
 from PIL import Image, ImageDraw
@@ -75,22 +74,25 @@ def rgb888_to_rgb565_bytes(img: Image.Image, *, width: int, height: int) -> byte
 
 def write_framebuffer(img: Image.Image, *, config: DisplayAdapterConfig) -> None:
     global _LAST_FRAME_HASH
+    raw = rgb888_to_rgb565_bytes(
+        apply_display_shift(img, width=config.width, height=config.height, display_x_shift=config.display_x_shift),
+        width=config.width,
+        height=config.height,
+    )
+
+    frame_hash = hashlib.blake2b(raw, digest_size=16).digest()
+    if frame_hash == _LAST_FRAME_HASH:
+        return
+
     try:
-        raw = rgb888_to_rgb565_bytes(
-            apply_display_shift(img, width=config.width, height=config.height, display_x_shift=config.display_x_shift),
-            width=config.width,
-            height=config.height,
-        )
-
-        frame_hash = hashlib.blake2b(raw, digest_size=16).digest()
-        if frame_hash == _LAST_FRAME_HASH:
-            return
-
         with open(config.fb_device, "wb", buffering=0) as fb:
             fb.write(raw)
-        _LAST_FRAME_HASH = frame_hash
-    except PermissionError:
-        print(f"[framebuffer] Permission denied writing to {config.fb_device}. Need root or video group membership.", file=sys.stderr)
+    except PermissionError as exc:
+        raise PermissionError(
+            f"Permission denied writing to {config.fb_device}. Need root or video group membership."
+        ) from exc
+
+    _LAST_FRAME_HASH = frame_hash
 
 
 def try_write_framebuffer(
