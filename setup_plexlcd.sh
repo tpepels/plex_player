@@ -170,7 +170,7 @@ write_env() {
   no_track_grace_seconds="${NO_TRACK_GRACE_SECONDS:-4.0}"
   startup_trace="${PLEXLCD_STARTUP_TRACE:-0}"
   startup_log="${PLEXLCD_STARTUP_LOG:-/tmp/plexlcd-startup.log}"
-  gpiozero_pin_factory="${GPIOZERO_PIN_FACTORY:-lgpio}"
+  gpiozero_pin_factory="${GPIOZERO_PIN_FACTORY:-auto}"
 
   log "Minimal setup (required fields only)"
   plex_host=$(prompt_default "Plex server URL" "$plex_host")

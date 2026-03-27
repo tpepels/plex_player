@@ -450,19 +450,55 @@ def setup_gpio_buttons():
 
     if BUTTONS_ENABLED:
         # On newer Raspberry Pi OS, gpiozero native sysfs backend can fail with Errno 22.
-        # Prefer lgpio when available unless user explicitly selected a factory.
+        # Auto mode tries commonly working factories before falling back to gpiozero default.
         selected_factory = os.environ.get("GPIOZERO_PIN_FACTORY", "").strip().lower()
-        if not selected_factory:
+        if selected_factory in {"", "auto"}:
+            chosen = None
             try:
                 from gpiozero import Device
-                from gpiozero.pins.lgpio import LGPIOFactory
-
-                Device.pin_factory = LGPIOFactory()
-                log_message("buttons", "Using gpiozero lgpio pin factory", level="INFO", stderr=True)
             except Exception as exc:
                 log_message(
                     "buttons",
-                    f"lgpio pin factory unavailable; falling back to gpiozero default factory ({exc})",
+                    f"Unable to import gpiozero Device for pin-factory setup ({exc})",
+                    level="WARN",
+                    stderr=True,
+                )
+                Device = None  # type: ignore[assignment]
+
+            if Device is not None:
+                try:
+                    from gpiozero.pins.rpigpio import RPiGPIOFactory
+
+                    Device.pin_factory = RPiGPIOFactory()
+                    chosen = "rpigpio"
+                except Exception as exc:
+                    log_message(
+                        "buttons",
+                        f"rpigpio factory unavailable ({exc})",
+                        level="WARN",
+                        stderr=True,
+                    )
+
+            if Device is not None and chosen is None:
+                try:
+                    from gpiozero.pins.lgpio import LGPIOFactory
+
+                    Device.pin_factory = LGPIOFactory()
+                    chosen = "lgpio"
+                except Exception as exc:
+                    log_message(
+                        "buttons",
+                        f"lgpio factory unavailable ({exc})",
+                        level="WARN",
+                        stderr=True,
+                    )
+
+            if chosen:
+                log_message("buttons", f"Using gpiozero {chosen} pin factory", level="INFO", stderr=True)
+            else:
+                log_message(
+                    "buttons",
+                    "No explicit gpiozero pin factory selected; using gpiozero default",
                     level="WARN",
                     stderr=True,
                 )
