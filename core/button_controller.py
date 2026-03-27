@@ -90,15 +90,22 @@ def setup_gpio_buttons(
         return
 
     for action, pin in (("play_pause", config.play_pause_pin), ("stop", config.stop_pin), ("next", config.next_pin)):
-        button = button_class(pin, pull_up=True, bounce_time=config.bounce_time)
+        try:
+            button = button_class(pin, pull_up=True, bounce_time=config.bounce_time)
 
-        def handler(action_name: str = action, pin_no: int = pin) -> None:
-            log_message(f"GPIO pin {pin_no} pressed -> action={action_name} client_id={runtime_state.current_target_client_id!r}")
-            dispatch_action(action_name)
+            def handler(action_name: str = action, pin_no: int = pin) -> None:
+                log_message(f"GPIO pin {pin_no} pressed -> action={action_name} client_id={runtime_state.current_target_client_id!r}")
+                dispatch_action(action_name)
 
-        button.when_pressed = handler
-        button_devices.append(button)
+            button.when_pressed = handler
+            button_devices.append(button)
+            log_message(f"GPIO pin {pin} initialized for action={action}")
+        except Exception as exc:
+            log_message(f"GPIO pin {pin} failed for action={action}: {exc}")
 
-    log_message(
-        f"Enabled GPIO buttons: play/pause={config.play_pause_pin}, stop={config.stop_pin}, next={config.next_pin}"
-    )
+    if button_devices:
+        log_message(
+            f"Enabled GPIO buttons: play/pause={config.play_pause_pin}, stop={config.stop_pin}, next={config.next_pin}"
+        )
+    else:
+        log_message("No GPIO buttons initialized; continuing without hardware buttons")

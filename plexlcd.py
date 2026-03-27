@@ -215,7 +215,7 @@ COVER_RETRY_SECONDS = DEFAULT_COVER_RETRY_SECONDS
 TOAST_DURATION_SECONDS = DEFAULT_TOAST_DURATION_SECONDS
 NO_TRACK_GRACE_SECONDS = DEFAULT_NO_TRACK_GRACE_SECONDS
 COMMAND_CONFIRM_SECONDS = DEFAULT_COMMAND_CONFIRM_SECONDS
-POWER_SAVE_MODE = env("POWER_SAVE_MODE", "0").strip().lower() in TRUTHY_ENV_VALUES
+POWER_SAVE_MODE = env("POWER_SAVE_MODE", "1").strip().lower() in TRUTHY_ENV_VALUES
 BUTTON_DEVICES = []
 RUNTIME_STATE = RuntimeState()
 REFRESH_EVENT = threading.Event()
@@ -448,6 +448,27 @@ def setup_gpio_buttons():
         )
         return
 
+    if BUTTONS_ENABLED:
+        # On newer Raspberry Pi OS, gpiozero native sysfs backend can fail with Errno 22.
+        # Prefer lgpio when available unless user explicitly selected a factory.
+        selected_factory = os.environ.get("GPIOZERO_PIN_FACTORY", "").strip().lower()
+        if not selected_factory:
+            try:
+                from gpiozero import Device
+                from gpiozero.pins.lgpio import LGPIOFactory
+
+                Device.pin_factory = LGPIOFactory()
+                log_message("buttons", "Using gpiozero lgpio pin factory", level="INFO", stderr=True)
+            except Exception as exc:
+                log_message(
+                    "buttons",
+                    f"lgpio pin factory unavailable; falling back to gpiozero default factory ({exc})",
+                    level="WARN",
+                    stderr=True,
+                )
+        else:
+            log_message("buttons", f"Using GPIOZERO_PIN_FACTORY={selected_factory}", level="INFO", stderr=True)
+
     try:
         setup_button_devices(
             button_class=Button,
@@ -461,6 +482,13 @@ def setup_gpio_buttons():
         # Keep display loop alive even when GPIO backend/pins are misconfigured.
         startup_trace_exception("[startup] [ERROR] GPIO setup failed; buttons disabled", exc)
         log_exception("buttons", "GPIO setup failed; continuing without buttons", exc)
+        if isinstance(exc, OSError) and getattr(exc, "errno", None) == 22:
+            log_message(
+                "buttons",
+                "GPIO backend rejected pin export (Errno 22). Try GPIOZERO_PIN_FACTORY=lgpio and ensure lgpio is installed.",
+                level="ERROR",
+                stderr=True,
+            )
 
 
 def text_center(draw: ImageDraw.ImageDraw, y: int, text: str, font, fill="white"):

@@ -143,7 +143,7 @@ write_env() {
     load_env_file "$ENV_FILE" || true
   fi
 
-  local plex_host player_name plex_token latitude longitude timezone location_name fb_device width height poll_seconds weather_refresh display_x_shift buttons_enabled button_play_pause_pin button_stop_pin button_next_pin button_label_play_y_percent button_label_stop_y_percent button_label_next_y_percent progress_update_seconds no_track_grace_seconds startup_trace startup_log
+  local plex_host player_name plex_token latitude longitude timezone location_name fb_device width height poll_seconds weather_refresh display_x_shift buttons_enabled button_play_pause_pin button_stop_pin button_next_pin button_label_play_y_percent button_label_stop_y_percent button_label_next_y_percent progress_update_seconds no_track_grace_seconds startup_trace startup_log gpiozero_pin_factory
 
   # Baseline defaults (or existing values when re-running configure)
   plex_host="${PLEX_SERVER:-http://plex.local:32400}"
@@ -170,6 +170,7 @@ write_env() {
   no_track_grace_seconds="${NO_TRACK_GRACE_SECONDS:-4.0}"
   startup_trace="${PLEXLCD_STARTUP_TRACE:-0}"
   startup_log="${PLEXLCD_STARTUP_LOG:-/tmp/plexlcd-startup.log}"
+  gpiozero_pin_factory="${GPIOZERO_PIN_FACTORY:-lgpio}"
 
   log "Minimal setup (required fields only)"
   plex_host=$(prompt_default "Plex server URL" "$plex_host")
@@ -234,6 +235,7 @@ PROGRESS_UPDATE_SECONDS="$progress_update_seconds"
 NO_TRACK_GRACE_SECONDS="$no_track_grace_seconds"
 PLEXLCD_STARTUP_TRACE="$startup_trace"
 PLEXLCD_STARTUP_LOG="$startup_log"
+GPIOZERO_PIN_FACTORY="$gpiozero_pin_factory"
 EOFENV
 
   chmod 600 "$ENV_FILE"

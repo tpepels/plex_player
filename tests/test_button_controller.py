@@ -12,6 +12,16 @@ class FakeButton:
         self.when_pressed = None
 
 
+class FlakyButton:
+    def __init__(self, pin, pull_up=True, bounce_time=0.0):
+        if pin == 24:
+            raise OSError("pin busy")
+        self.pin = pin
+        self.pull_up = pull_up
+        self.bounce_time = bounce_time
+        self.when_pressed = None
+
+
 class ButtonControllerTests(unittest.TestCase):
     def _config(self, **kwargs) -> ButtonControllerConfig:
         data = {
@@ -89,6 +99,26 @@ class ButtonControllerTests(unittest.TestCase):
         self.assertEqual(dispatched, ["stop"])
         self.assertTrue(any("Enabled GPIO buttons" in msg for msg in logs))
         self.assertTrue(any("action=stop" in msg for msg in logs))
+
+    def test_setup_gpio_buttons_continues_after_single_pin_failure(self):
+        runtime = RuntimeState(current_target_client_id="client-9")
+        devices = []
+        dispatched = []
+        logs = []
+
+        setup_gpio_buttons(
+            button_class=FlakyButton,
+            button_devices=devices,
+            runtime_state=runtime,
+            config=self._config(),
+            dispatch_action=dispatched.append,
+            log_message=logs.append,
+        )
+
+        self.assertEqual([d.pin for d in devices], [23, 25])
+        self.assertTrue(any("pin 24 failed" in msg.lower() for msg in logs))
+        devices[1].when_pressed()
+        self.assertEqual(dispatched, ["next"])
 
 
 if __name__ == "__main__":

@@ -93,6 +93,11 @@ Useful optional values:
 - `POWER_SAVE_MODE=1` (aggressive low-power profile: slower polling, fewer wakeups, reduced render cost)
 - `PLEXLCD_STARTUP_TRACE=1` (enable detailed startup trace logs while debugging service restarts)
 - `PLEXLCD_STARTUP_LOG=/tmp/plexlcd-startup.log` (trace file path when startup tracing is enabled)
+- `GPIOZERO_PIN_FACTORY=lgpio` (recommended on modern Raspberry Pi OS; avoids legacy sysfs GPIO export errors)
+
+Notes:
+
+- `POWER_SAVE_MODE` defaults to `1`. Set `POWER_SAVE_MODE=0` for more frequent updates.
 
 ## Daily Commands
 
