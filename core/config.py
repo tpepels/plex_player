@@ -154,9 +154,6 @@ class Config:
         elif not os.access(cfg.fb_device, os.W_OK):
             errors.append(f"FB_DEVICE '{cfg.fb_device}' is not writable (need root or group membership)")
 
-        if cfg.buttons_enabled and not button_available:
-            errors.append("BUTTONS_ENABLED is set but gpiozero is not installed")
-
         try:
             ZoneInfo(cfg.timezone)
         except Exception:

@@ -361,6 +361,15 @@ def send_plex_playback_command(action: str):
 
 def setup_gpio_buttons():
     """Initialize GPIO button callbacks when hardware buttons are enabled."""
+    if BUTTONS_ENABLED and Button is None:
+        log_message(
+            "buttons",
+            "BUTTONS_ENABLED=1 but gpiozero is unavailable; continuing with buttons disabled",
+            level="WARN",
+            stderr=True,
+        )
+        return
+
     setup_button_devices(
         button_class=Button,
         button_devices=BUTTON_DEVICES,
