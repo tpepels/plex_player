@@ -89,10 +89,9 @@ from services import (
 )
 from zoneinfo import ZoneInfo
 
-try:
-    from gpiozero import Button
-except Exception:
-    Button = None
+# gpiozero is imported lazily inside setup_gpio_buttons() *after* env manipulation,
+# so GPIOZERO_PIN_FACTORY is never visible to gpiozero during import.
+Button = None
 
 
 # Environment bootstrap helpers
@@ -439,53 +438,40 @@ def send_plex_playback_command(action: str):
 
 def setup_gpio_buttons():
     """Initialize GPIO button callbacks when hardware buttons are enabled."""
-    if BUTTONS_ENABLED and Button is None:
-        log_message(
-            "buttons",
-            "BUTTONS_ENABLED=1 but gpiozero is unavailable; continuing with buttons disabled",
-            level="WARN",
-            stderr=True,
-        )
-        return
-
     if BUTTONS_ENABLED:
+        global Button
         # On newer Raspberry Pi OS, gpiozero native sysfs backend can fail with Errno 22.
         # Auto mode tries commonly working factories before falling back to gpiozero default.
+        # IMPORTANT: manipulate the env var BEFORE importing gpiozero so the library never
+        # sees "auto" (which gpiozero does not recognise as a valid pin-factory name).
         selected_factory = os.environ.get("GPIOZERO_PIN_FACTORY", "").strip().lower()
         if selected_factory in {"", "auto"}:
-            # gpiozero itself does not recognize "auto" as a pin-factory name.
-            # Remove the env override so our explicit Device.pin_factory selection is honored.
+            # Remove the env override before any gpiozero import so the library can't see it.
             os.environ.pop("GPIOZERO_PIN_FACTORY", None)
             chosen = None
+            Device = None  # type: ignore[assignment]
+
             try:
-                from gpiozero import Device
+                from gpiozero.pins.rpigpio import RPiGPIOFactory
+                from gpiozero import Device as _Device
+
+                Device = _Device
+                Device.pin_factory = RPiGPIOFactory()
+                chosen = "rpigpio"
             except Exception as exc:
                 log_message(
                     "buttons",
-                    f"Unable to import gpiozero Device for pin-factory setup ({exc})",
+                    f"rpigpio factory unavailable ({exc})",
                     level="WARN",
                     stderr=True,
                 )
-                Device = None  # type: ignore[assignment]
 
-            if Device is not None:
-                try:
-                    from gpiozero.pins.rpigpio import RPiGPIOFactory
-
-                    Device.pin_factory = RPiGPIOFactory()
-                    chosen = "rpigpio"
-                except Exception as exc:
-                    log_message(
-                        "buttons",
-                        f"rpigpio factory unavailable ({exc})",
-                        level="WARN",
-                        stderr=True,
-                    )
-
-            if Device is not None and chosen is None:
+            if chosen is None:
                 try:
                     from gpiozero.pins.lgpio import LGPIOFactory
+                    from gpiozero import Device as _Device  # noqa: F811
 
+                    Device = _Device
                     Device.pin_factory = LGPIOFactory()
                     chosen = "lgpio"
                 except Exception as exc:
@@ -507,6 +493,21 @@ def setup_gpio_buttons():
                 )
         else:
             log_message("buttons", f"Using GPIOZERO_PIN_FACTORY={selected_factory}", level="INFO", stderr=True)
+
+        # Import Button NOW — after env is clean and Device.pin_factory is set —
+        # so gpiozero never reads GPIOZERO_PIN_FACTORY=auto during class initialisation.
+        try:
+            from gpiozero import Button as _Button  # noqa: F811
+
+            Button = _Button
+        except Exception as exc:
+            log_message(
+                "buttons",
+                f"BUTTONS_ENABLED=1 but gpiozero is unavailable ({exc}); continuing with buttons disabled",
+                level="WARN",
+                stderr=True,
+            )
+            return
 
     try:
         setup_button_devices(
