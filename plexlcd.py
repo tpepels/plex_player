@@ -134,6 +134,22 @@ def env(name: str, default: str) -> str:
     return os.environ.get(name, default)
 
 
+STARTUP_TRACE_FILE = os.environ.get("PLEXLCD_STARTUP_LOG", "/tmp/plexlcd-startup.log")
+
+
+def startup_trace(message: str) -> None:
+    """Best-effort startup tracing for environments where journald misses app stderr."""
+
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    line = f"{ts} {message}"
+    try:
+        with open(STARTUP_TRACE_FILE, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception:
+        pass
+    print(line, file=sys.stderr, flush=True)
+
+
 def env_float(name: str, default: str) -> float:
     """Parse float env var safely at import-time, with fallback and stderr warning."""
 
@@ -141,11 +157,7 @@ def env_float(name: str, default: str) -> float:
     try:
         return float(raw)
     except (TypeError, ValueError):
-        print(
-            f"[startup] [WARN] Invalid float for {name}={raw!r}; using default {default}",
-            file=sys.stderr,
-            flush=True,
-        )
+        startup_trace(f"[startup] [WARN] Invalid float for {name}={raw!r}; using default {default}")
         return float(default)
 
 
@@ -322,9 +334,11 @@ def validate_startup():
     # Assumption: validation must fail-fast before any framebuffer/network side effects.
     cfg, errors = Config.from_env(button_available=Button is not None)
     if errors:
+        startup_trace("[startup] [ERROR] Configuration validation failed")
         log_message("startup", "Configuration errors:", level="ERROR", stderr=True)
         for err in errors:
             log_message("startup", f"- {err}", level="ERROR", stderr=True)
+            startup_trace(f"[startup] [ERROR] {err}")
         sys.exit(1)
 
     _fields = (
@@ -722,6 +736,7 @@ def render_from_transition(state: LoopState, decision: TransitionMode, track: Op
 def main():
     """Main app loop: fetch state, render frame, and sleep/wake for next cycle."""
     # Assumption: top-level loop must be resilient; all recoverable errors are logged and retried.
+    startup_trace("[startup] [INFO] main() entered")
     validate_startup()
     wait_for_display()
     setup_gpio_buttons()
@@ -777,11 +792,12 @@ def main():
 
 if __name__ == "__main__":
     try:
+        startup_trace("[startup] [INFO] process started")
         main()
     except SystemExit:
         raise
     except Exception as exc:
-        print(f"[startup] [ERROR] Fatal startup error: {exc}", file=sys.stderr, flush=True)
+        startup_trace(f"[startup] [ERROR] Fatal startup error: {exc}")
         import traceback
 
         traceback.print_exc()
