@@ -451,33 +451,37 @@ def setup_gpio_buttons():
             chosen = None
             Device = None  # type: ignore[assignment]
 
+            # Prefer lgpio over rpigpio: lgpio uses /dev/gpiochip (kernel 4.8+) and works on
+            # kernel 6.6+ where RPi.GPIO's add_event_detect ioctl was removed. RPi.GPIO
+            # initialises its factory successfully but silently fails at Button creation time
+            # on kernel 6.6+, so we cannot detect the breakage during factory setup.
             try:
-                from gpiozero.pins.rpigpio import RPiGPIOFactory
+                from gpiozero.pins.lgpio import LGPIOFactory
                 from gpiozero import Device as _Device
 
                 Device = _Device
-                Device.pin_factory = RPiGPIOFactory()
-                chosen = "rpigpio"
+                Device.pin_factory = LGPIOFactory()
+                chosen = "lgpio"
             except Exception as exc:
                 log_message(
                     "buttons",
-                    f"rpigpio factory unavailable ({exc})",
+                    f"lgpio factory unavailable ({exc})",
                     level="WARN",
                     stderr=True,
                 )
 
             if chosen is None:
                 try:
-                    from gpiozero.pins.lgpio import LGPIOFactory
+                    from gpiozero.pins.rpigpio import RPiGPIOFactory
                     from gpiozero import Device as _Device  # noqa: F811
 
                     Device = _Device
-                    Device.pin_factory = LGPIOFactory()
-                    chosen = "lgpio"
+                    Device.pin_factory = RPiGPIOFactory()
+                    chosen = "rpigpio"
                 except Exception as exc:
                     log_message(
                         "buttons",
-                        f"lgpio factory unavailable ({exc})",
+                        f"rpigpio factory unavailable ({exc})",
                         level="WARN",
                         stderr=True,
                     )
