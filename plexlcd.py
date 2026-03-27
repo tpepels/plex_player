@@ -17,6 +17,7 @@ import socket
 import sys
 import threading
 import time
+import traceback
 from datetime import datetime
 from typing import Optional
 
@@ -148,6 +149,15 @@ def startup_trace(message: str) -> None:
     except Exception:
         pass
     print(line, file=sys.stderr, flush=True)
+
+
+def startup_trace_exception(prefix: str, exc: Exception) -> None:
+    """Write exception summary and traceback into startup trace sink."""
+
+    startup_trace(f"{prefix}: {exc!r}")
+    tb = traceback.format_exc()
+    for line in tb.rstrip().splitlines():
+        startup_trace(f"[startup] [TRACE] {line}")
 
 
 def env_float(name: str, default: str) -> float:
@@ -399,14 +409,19 @@ def setup_gpio_buttons():
         )
         return
 
-    setup_button_devices(
-        button_class=Button,
-        button_devices=BUTTON_DEVICES,
-        runtime_state=RUNTIME_STATE,
-        config=button_controller_config(),
-        dispatch_action=send_plex_playback_command,
-        log_message=lambda msg: log_message("buttons", msg, level="INFO", stderr=True),
-    )
+    try:
+        setup_button_devices(
+            button_class=Button,
+            button_devices=BUTTON_DEVICES,
+            runtime_state=RUNTIME_STATE,
+            config=button_controller_config(),
+            dispatch_action=send_plex_playback_command,
+            log_message=lambda msg: log_message("buttons", msg, level="INFO", stderr=True),
+        )
+    except Exception as exc:
+        # Keep display loop alive even when GPIO backend/pins are misconfigured.
+        startup_trace_exception("[startup] [ERROR] GPIO setup failed; buttons disabled", exc)
+        log_exception("buttons", "GPIO setup failed; continuing without buttons", exc)
 
 
 def text_center(draw: ImageDraw.ImageDraw, y: int, text: str, font, fill="white"):
@@ -797,8 +812,6 @@ if __name__ == "__main__":
     except SystemExit:
         raise
     except Exception as exc:
-        startup_trace(f"[startup] [ERROR] Fatal startup error: {exc}")
-        import traceback
-
+        startup_trace_exception("[startup] [ERROR] Fatal startup error", exc)
         traceback.print_exc()
         raise
