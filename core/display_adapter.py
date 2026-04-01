@@ -6,11 +6,6 @@ from typing import Callable
 
 from PIL import Image, ImageDraw
 
-try:
-    import numpy as np
-except Exception:
-    np = None
-
 
 _LAST_FRAME_HASH: bytes | None = None
 
@@ -47,28 +42,26 @@ def apply_display_shift(img: Image.Image, *, width: int, height: int, display_x_
 
 
 def rgb888_to_rgb565_bytes(img: Image.Image, *, width: int, height: int) -> bytes:
+    """Convert RGB888 image data into little-endian RGB565 bytes.
+
+    This stays intentionally dependency-free so the app does not need numpy
+    resident in memory on constrained devices.
+    """
+
     if img.mode != "RGB":
         img = img.convert("RGB")
 
-    if np is not None:
-        arr = np.asarray(img, dtype=np.uint8)
-        if arr.ndim == 3 and arr.shape[2] == 3:
-            r = arr[:, :, 0].astype(np.uint16)
-            g = arr[:, :, 1].astype(np.uint16)
-            b = arr[:, :, 2].astype(np.uint16)
-            v = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
-            out = np.empty((height, width, 2), dtype=np.uint8)
-            out[:, :, 0] = (v & 0xFF).astype(np.uint8)
-            out[:, :, 1] = (v >> 8).astype(np.uint8)
-            return out.tobytes()
-
-    raw = img.tobytes()
+    raw = memoryview(img.tobytes())
     out = bytearray(width * height * 2)
-    for i in range(width * height):
-        r, g, b = raw[i * 3], raw[i * 3 + 1], raw[i * 3 + 2]
+    src = 0
+    dst = 0
+    for _ in range(width * height):
+        r, g, b = raw[src], raw[src + 1], raw[src + 2]
         v = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
-        out[i * 2] = v & 0xFF
-        out[i * 2 + 1] = v >> 8
+        out[dst] = v & 0xFF
+        out[dst + 1] = v >> 8
+        src += 3
+        dst += 2
     return bytes(out)
 
 

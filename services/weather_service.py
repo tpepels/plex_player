@@ -9,9 +9,8 @@ Design assumptions:
 import time
 from typing import Callable, Optional
 
-import requests
-
 from core.models import WeatherInfo
+from .http_client import get as http_get
 
 WEATHER_CODES = {
     0: "Clear",
@@ -102,7 +101,7 @@ def fetch_weather(
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            r = requests.get(url, timeout=timeout)
+            r = http_get(url, timeout=timeout)
             r.raise_for_status()
             payload = r.json()
             cur = payload.get("current", {})

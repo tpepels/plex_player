@@ -5,7 +5,12 @@ from unittest.mock import patch
 
 from PIL import Image
 
-from core.display_adapter import DisplayAdapterConfig, DisplayAdapterLogger, try_write_framebuffer
+from core.display_adapter import (
+    DisplayAdapterConfig,
+    DisplayAdapterLogger,
+    rgb888_to_rgb565_bytes,
+    try_write_framebuffer,
+)
 
 
 class DisplayAdapterTests(unittest.TestCase):
@@ -47,6 +52,14 @@ class DisplayAdapterTests(unittest.TestCase):
         finally:
             if os.path.exists(path):
                 os.unlink(path)
+
+    def test_rgb888_to_rgb565_bytes_packs_little_endian_pixels(self):
+        img = Image.new("RGB", (3, 1))
+        img.putdata([(255, 0, 0), (0, 255, 0), (0, 0, 255)])
+
+        packed = rgb888_to_rgb565_bytes(img, width=3, height=1)
+
+        self.assertEqual(packed, bytes([0x00, 0xF8, 0xE0, 0x07, 0x1F, 0x00]))
 
 
 if __name__ == "__main__":

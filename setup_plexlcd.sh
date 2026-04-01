@@ -37,7 +37,7 @@ ensure_venv() {
   if [[ -f "$APP_DIR/requirements.txt" ]]; then
     "$VENV_PYTHON" -m pip install -r "$APP_DIR/requirements.txt"
   else
-    "$VENV_PYTHON" -m pip install requests pillow numpy
+    "$VENV_PYTHON" -m pip install pillow gpiozero
   fi
 
   # Optional GPIO compatibility helpers. Do not fail the install if one path is unavailable.
@@ -64,7 +64,7 @@ install_packages() {
 
   local packages=(
     python3 python3-pip python3-venv python3-dev
-    python3-requests python3-pil python3-gpiozero python3-rpi.gpio python3-pigpio
+    python3-pil python3-gpiozero python3-rpi.gpio python3-pigpio
     python3-libgpiod gpiod curl jq fonts-dejavu-core fonts-noto-core fbset fbi
   )
 

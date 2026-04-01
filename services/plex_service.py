@@ -11,10 +11,10 @@ import time
 import xml.etree.ElementTree as ET
 from typing import Callable, Optional
 
-import requests
 from PIL import Image, ImageOps
 
 from core.models import PlexTrack
+from .http_client import get as http_get
 
 
 def normalize_playback_state(item: dict) -> str:
@@ -56,7 +56,7 @@ def _get_with_retry(
 ):
     for attempt in range(2):
         try:
-            r = requests.get(url, params=params, headers=headers, timeout=timeout)
+            r = http_get(url, params=params, headers=headers, timeout=timeout)
             r.raise_for_status()
             return r
         except Exception as exc:
@@ -216,7 +216,7 @@ def fetch_player_timeline_state(
 
     try:
         url = f"http://{player_addr}:{player_port}/player/timeline/poll"
-        resp = requests.get(
+        resp = http_get(
             url,
             headers={
                 "Accept": "application/xml, text/xml, */*",
@@ -229,9 +229,8 @@ def fetch_player_timeline_state(
             },
             timeout=timeout,
         )
-        resp.raise_for_status()
 
-        root = ET.fromstring(resp.text)
+        root = ET.fromstring(resp.content)
         timeline = root.find("Timeline")
         if timeline is None:
             return None
@@ -298,7 +297,7 @@ def send_playback_command(
     url = f"{base_url}/player/playback/{endpoint}"
     log_info(f"{action} -> GET {url} commandID={command_id}")
     try:
-        resp = requests.get(
+        resp = http_get(
             url,
             headers={
                 "Accept": "application/json",
@@ -312,7 +311,6 @@ def send_playback_command(
             timeout=timeout,
         )
         log_debug(f"Response {resp.status_code}: {resp.text[:200]!r}")
-        resp.raise_for_status()
         return True
     except Exception as exc:
         log_error(f"Failed to send {action}: {exc}")

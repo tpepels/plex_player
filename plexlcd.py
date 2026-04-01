@@ -612,8 +612,13 @@ def truncate(draw: ImageDraw.ImageDraw, text: str, font, max_width: int) -> str:
 
 
 def fit_cover(img: Image.Image, w: int, h: int) -> Image.Image:
+    if img.mode == "RGB" and img.size == (w, h):
+        return img
     method = Image.Resampling.BILINEAR if LOW_POWER_COVER_RENDER else Image.Resampling.LANCZOS
-    return ImageOps.fit(img.convert("RGB"), (w, h), method=method)
+    rgb_img = img if img.mode == "RGB" else img.convert("RGB")
+    if rgb_img.size == (w, h):
+        return rgb_img
+    return ImageOps.fit(rgb_img, (w, h), method=method)
 
 
 # Rendering pipeline for idle and now-playing screens

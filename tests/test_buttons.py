@@ -9,8 +9,11 @@ Then it will try to send a playPause command to Plex and show the response.
 Press Ctrl+C to quit.
 """
 
+import json
 import os
 import time
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 # ---------------------------------------------------------------------------
 # Load .env
@@ -60,6 +63,16 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Plex test helper
 # ---------------------------------------------------------------------------
+def http_get(url: str, *, headers: dict[str, str], params: dict[str, object] | None = None, timeout: int = 10) -> tuple[int, str]:
+    if params:
+        url = f"{url}?{urlencode(params)}"
+    req = Request(url, headers=headers, method="GET")
+    with urlopen(req, timeout=timeout) as resp:
+        data = resp.read()
+        charset = resp.headers.get_content_charset() or "utf-8"
+        return getattr(resp, "status", resp.getcode()), data.decode(charset, errors="replace")
+
+
 def test_plex_command(action: str, player_addr: str | None, player_port: int):
     """Fire a single Plex playback command directly to the player and print the full response."""
     endpoint_map = {"play_pause": "playPause", "stop": "stop", "next": "skipNext"}
@@ -78,9 +91,8 @@ def test_plex_command(action: str, player_addr: str | None, player_port: int):
     print(f"[plex]  GET {url}")
     print(f"[plex]  params={params}")
     try:
-        import requests
-        r = requests.get(url, headers=headers, params=params, timeout=10)
-        print(f"[plex]  HTTP {r.status_code}  body={r.text[:400]!r}")
+        status, body = http_get(url, headers=headers, params=params, timeout=10)
+        print(f"[plex]  HTTP {status}  body={body[:400]!r}")
     except Exception as exc:
         print(f"[plex]  ERROR: {exc}")
 
@@ -91,15 +103,13 @@ def test_plex_command(action: str, player_addr: str | None, player_port: int):
 def get_target_client_id() -> tuple[str | None, str | None, int]:
     """Returns (machine_identifier, player_address, player_port)."""
     try:
-        import requests
         player_name = os.environ.get("PLAYER_NAME", "")
-        r = requests.get(
+        _, body = http_get(
             f"{PLEX_SERVER}/status/sessions",
             headers={"Accept": "application/json", "X-Plex-Token": PLEX_TOKEN},
             timeout=10,
         )
-        r.raise_for_status()
-        items = r.json().get("MediaContainer", {}).get("Metadata", [])
+        items = json.loads(body).get("MediaContainer", {}).get("Metadata", [])
         if isinstance(items, dict):
             items = [items]
         for item in items:
