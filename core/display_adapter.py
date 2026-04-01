@@ -8,9 +8,10 @@ from PIL import Image, ImageDraw
 
 
 _LAST_FRAME_HASH: bytes | None = None
+_RGB565_BUFFER: bytearray = bytearray()
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class DisplayAdapterConfig:
     fb_device: str
     width: int
@@ -18,7 +19,7 @@ class DisplayAdapterConfig:
     display_x_shift: int
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class DisplayAdapterLogger:
     log_exception: Callable[[str, str, Exception], None]
     log_message: Callable[[str, str], None]
@@ -41,7 +42,7 @@ def apply_display_shift(img: Image.Image, *, width: int, height: int, display_x_
     return shifted
 
 
-def rgb888_to_rgb565_bytes(img: Image.Image, *, width: int, height: int) -> bytes:
+def rgb888_to_rgb565_bytes(img: Image.Image, *, width: int, height: int) -> bytearray:
     """Convert RGB888 image data into little-endian RGB565 bytes.
 
     This stays intentionally dependency-free so the app does not need numpy
@@ -51,8 +52,13 @@ def rgb888_to_rgb565_bytes(img: Image.Image, *, width: int, height: int) -> byte
     if img.mode != "RGB":
         img = img.convert("RGB")
 
+    global _RGB565_BUFFER
+
     raw = memoryview(img.tobytes())
-    out = bytearray(width * height * 2)
+    required_size = width * height * 2
+    if len(_RGB565_BUFFER) != required_size:
+        _RGB565_BUFFER = bytearray(required_size)
+    out = _RGB565_BUFFER
     src = 0
     dst = 0
     for _ in range(width * height):
@@ -62,7 +68,7 @@ def rgb888_to_rgb565_bytes(img: Image.Image, *, width: int, height: int) -> byte
         out[dst + 1] = v >> 8
         src += 3
         dst += 2
-    return bytes(out)
+    return out
 
 
 def write_framebuffer(img: Image.Image, *, config: DisplayAdapterConfig) -> None:

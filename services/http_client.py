@@ -34,7 +34,7 @@ class HttpStatusError(RuntimeError):
     """Raised when an HTTP response returns a 4xx/5xx status code."""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class HttpResponse:
     status_code: int
     content: bytes

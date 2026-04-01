@@ -19,6 +19,7 @@ import threading
 import time
 import traceback
 from datetime import datetime
+from functools import lru_cache
 from typing import Optional
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
@@ -314,6 +315,7 @@ def get_location_label() -> str:
     return TIMEZONE.replace("_", " ")
 
 
+@lru_cache(maxsize=None)
 def load_font(path: str, size: int):
     try:
         return ImageFont.truetype(path, size=size)
@@ -352,19 +354,21 @@ def draw_toast(img: Image.Image) -> Image.Image:
     if not text:
         return img
 
-    base = img.convert("RGBA")
-    overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
-    od = ImageDraw.Draw(overlay)
-    bbox = od.textbbox((0, 0), text, font=FONT_TOAST)
+    draw = ImageDraw.Draw(img, "RGBA")
+    bbox = draw.textbbox((0, 0), text, font=FONT_TOAST)
     tw = bbox[2] - bbox[0]
     th = bbox[3] - bbox[1]
     pad_x = 6
     pad_y = 3
     px = max(0, (WIDTH - (tw + pad_x * 2)) // 2)
     py = 3
-    od.rounded_rectangle((px, py, px + tw + pad_x * 2, py + th + pad_y * 2), radius=5, fill=(0, 0, 0, 150))
-    od.text((px + pad_x - bbox[0], py + pad_y - bbox[1] + 1), text, font=FONT_TOAST, fill="#ffffff")
-    return Image.alpha_composite(base, overlay).convert("RGB")
+    draw.rounded_rectangle(
+        (px, py, px + tw + pad_x * 2, py + th + pad_y * 2),
+        radius=5,
+        fill=(0, 0, 0, 150),
+    )
+    draw.text((px + pad_x - bbox[0], py + pad_y - bbox[1] + 1), text, font=FONT_TOAST, fill="#ffffff")
+    return img
 
 
 # Startup validation and config application
@@ -576,20 +580,15 @@ def draw_button_labels(
 
     x = 6
 
-    # Draw semi-transparent circle backgrounds on a composited overlay
-    overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
-    od = ImageDraw.Draw(overlay)
+    # Draw directly with RGBA blending to avoid allocating whole extra images.
+    draw = ImageDraw.Draw(img, "RGBA")
     tmp = ImageDraw.Draw(img)
     radius = 10
     for _, label, label_y in button_items:
         bbox = tmp.textbbox((x, label_y), label, font=FONT_LABEL)
         cx = (bbox[0] + bbox[2]) // 2
         cy = (bbox[1] + bbox[3]) // 2
-        od.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), fill=(0, 0, 0, 120))
-
-    base = img.convert("RGBA")
-    base = Image.alpha_composite(base, overlay)
-    img = base.convert("RGB")
+        draw.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), fill=(0, 0, 0, 120))
 
     draw = ImageDraw.Draw(img)
     for _, label, label_y in button_items:
@@ -672,12 +671,9 @@ def render_idle(
 def render_now_playing(cover: Image.Image, track: PlexTrack, elapsed_ms: Optional[int] = None) -> Image.Image:
     """Render now-playing screen with compact metadata and progress strip."""
 
-    bg = fit_cover(cover, WIDTH, HEIGHT)
-    overlay = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
-    od = ImageDraw.Draw(overlay)
-    od.rectangle((0, HEIGHT - 90, WIDTH, HEIGHT), fill=(0, 0, 0, 150))
-    composed = Image.alpha_composite(bg.convert("RGBA"), overlay).convert("RGB")
-    draw = ImageDraw.Draw(composed)
+    composed = fit_cover(cover, WIDTH, HEIGHT).copy()
+    draw = ImageDraw.Draw(composed, "RGBA")
+    draw.rectangle((0, HEIGHT - 90, WIDTH, HEIGHT), fill=(0, 0, 0, 150))
 
     text_x = 34
     text_max_width = WIDTH - text_x - 8

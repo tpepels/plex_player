@@ -7,7 +7,7 @@ from core.models import LoopState, PlexTrack
 from core.transition_rules import compute_display_elapsed_ms
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class PlayingRenderPlan:
     display_elapsed_ms: Optional[int]
     progress_bucket: Optional[int]
@@ -23,7 +23,7 @@ class PlayingRenderPlan:
         return self.needs_refresh or self.needs_retry or self.progress_changed or self.toast_changed
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class IdleRenderPlan:
     minute_key: str
     idle_state: str

@@ -8,7 +8,7 @@ from typing import Any, Callable
 from core.models import RuntimeState
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ButtonControllerConfig:
     buttons_enabled: bool
     play_pause_pin: int

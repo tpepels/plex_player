@@ -6,7 +6,7 @@ from typing import Callable, Optional
 from core.models import LoopState, PlaybackSnapshot, PlexTrack, RuntimeState
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class PlaybackCollectorConfig:
     player_name: str
     plex_server: str
@@ -14,7 +14,7 @@ class PlaybackCollectorConfig:
     http_timeout: int
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class PlaybackCollectorDeps:
     fetch_sessions_json: Callable[..., Optional[dict]]
     find_player_track: Callable[[dict, str], Optional[PlexTrack]]
@@ -24,7 +24,7 @@ class PlaybackCollectorDeps:
     log_error: Callable[[str], None]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CollectedPlayback:
     track: Optional[PlexTrack]
     snapshot: PlaybackSnapshot

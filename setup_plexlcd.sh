@@ -403,7 +403,9 @@ test_plex() {
 }
 
 configure_app() {
-  log "Configure writes .env, detects the active Plex player, and can install the service."
+  local offer_service_install="${1:-1}"
+
+  log "Configure writes .env and detects the active Plex player."
   prepare_local_files
   if [[ ! -x "$VENV_PYTHON" ]]; then
     log "Virtual environment not found. Run $(basename "$0") install first."
@@ -419,10 +421,15 @@ configure_app() {
     return 0
   fi
 
+  if [[ "$offer_service_install" != "1" ]]; then
+    log "Configuration complete."
+    return 0
+  fi
+
   if prompt_yes_no "Install and start the systemd service now" 0; then
     install_service
   else
-    log "Configuration complete. Rerun $(basename "$0") configure later if you want to install the service."
+    log "Configuration complete. Rerun $(basename "$0") install or $(basename "$0") service when you want to install the service."
   fi
 }
 
@@ -461,7 +468,9 @@ install_service() {
     return 1
   fi
 
-  ensure_venv
+  if [[ ! -x "$VENV_PYTHON" ]]; then
+    ensure_venv
+  fi
   if [[ ! -x "$VENV_PYTHON" ]]; then
     log "Virtual environment Python not found at $VENV_PYTHON"
     return 1
@@ -482,8 +491,6 @@ WorkingDirectory=$APP_DIR
 EnvironmentFile=$ENV_FILE
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=PYTHONUNBUFFERED=1
-RuntimeDirectory=plexlcd
-RuntimeDirectoryPreserve=restart
 StandardOutput=journal
 StandardError=journal
 ExecStart=$VENV_PYTHON $APP_DIR/plexlcd.py
@@ -499,13 +506,30 @@ EOFUNIT
   $SUDO systemctl status --no-pager plexlcd.service || true
 }
 
+install_app() {
+  install_packages
+  prepare_local_files
+
+  if [[ ! -f "$ENV_FILE" ]]; then
+    log "No $ENV_FILE found. Running configure so install can also create the service."
+    configure_app 0 || return 1
+  fi
+
+  if [[ ! -f "$ENV_FILE" ]]; then
+    log "Skipping service installation because $ENV_FILE was not created."
+    return 1
+  fi
+
+  install_service
+}
+
 usage() {
   cat <<EOFUSAGE
 Usage: $(basename "$0") [command]
 
 Commands:
-  install         Install system packages, create .venv, and prepare the app
-  configure       Write .env, detect the player, and optionally install the service
+  install         Install packages, create/update .venv, and install/restart the service
+  configure       Write .env and detect the player
   service         Reinstall/restart only the systemd service from the current tree
   framebuffers    Show detected framebuffer devices
   token-help      Print Plex token instructions
@@ -518,12 +542,14 @@ main() {
     usage
     printf '\nRecommended setup:\n'
     printf '  %s install\n' "$(basename "$0")"
+    printf '\nOptional later updates:\n'
     printf '  %s configure\n' "$(basename "$0")"
+    printf '  %s service\n' "$(basename "$0")"
     return 0
   fi
 
   case "$cmd" in
-    install) install_packages; prepare_local_files ;;
+    install) install_app ;;
     configure) configure_app ;;
     service) install_service ;;
     framebuffers) show_framebuffers ;;

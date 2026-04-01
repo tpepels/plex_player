@@ -33,7 +33,7 @@ from core.constants import (
 )
 
 
-@dataclass
+@dataclass(slots=True)
 class Config:
     """Runtime configuration parsed from environment variables."""
 

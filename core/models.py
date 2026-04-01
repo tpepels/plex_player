@@ -21,7 +21,7 @@ class TransitionMode(str, Enum):
     IDLE = "idle"
 
 
-@dataclass
+@dataclass(slots=True)
 class WeatherInfo:
     """Weather payload normalized for idle-screen rendering.
 
@@ -40,7 +40,7 @@ class WeatherInfo:
     next_hour_weather_code: Optional[int] = None
 
 
-@dataclass
+@dataclass(slots=True)
 class PlexTrack:
     """Track/session payload normalized from Plex `status/sessions`.
 
@@ -63,7 +63,7 @@ class PlexTrack:
     duration_ms: Optional[int] = None
 
 
-@dataclass
+@dataclass(slots=True)
 class LoopState:
     """Mutable state used by the main render loop between iterations."""
 
@@ -84,7 +84,7 @@ class LoopState:
     no_track_grace_until_ts: float = 0.0
 
 
-@dataclass
+@dataclass(slots=True)
 class RuntimeState:
     """Mutable cross-cutting app state used by callbacks and UI overlays.
 
@@ -104,7 +104,7 @@ class RuntimeState:
     command_counter: int = 1
 
 
-@dataclass
+@dataclass(slots=True)
 class PendingCommand:
     """Local command intent awaiting Plex-state confirmation."""
 
@@ -115,7 +115,7 @@ class PendingCommand:
     expected_states: tuple[str, ...] = ()
 
 
-@dataclass
+@dataclass(slots=True)
 class PlaybackSnapshot:
     """Single-loop snapshot used to resolve render transitions."""
 
@@ -129,7 +129,7 @@ class PlaybackSnapshot:
     timeline_state: Optional[str] = None
 
 
-@dataclass
+@dataclass(slots=True)
 class TransitionDecision:
     """Resolved transition output consumed by the main loop."""
 

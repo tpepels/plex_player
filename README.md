@@ -12,16 +12,22 @@ Run these commands from this folder:
 ```bash
 chmod +x setup_plexlcd.sh
 ./setup_plexlcd.sh install
-./setup_plexlcd.sh configure
 ```
 
-`install` handles packages and the Python environment. `configure` writes `.env`, detects the active Plex player from current Plex sessions, and can install the systemd service for you.
+`install` handles packages, creates or updates `.venv`, and installs or restarts the systemd service. If `.env` does not exist yet, it will prompt for configuration first.
 
-If you chose service installation during `configure`, you can check it with:
+To change settings later, run:
+
+```bash
+./setup_plexlcd.sh configure
+./setup_plexlcd.sh service
+```
+
+You can check the service with:
 
 ```bash
 systemctl status plexlcd.service
-tail -f /run/plexlcd/service.log
+journalctl -u plexlcd.service -f
 ```
 
 ## What You Get
@@ -68,7 +74,7 @@ Recommended adaptation flow:
 ## Configuration
 
 The app reads `.env` in this folder.
-Most users should start with `./setup_plexlcd.sh install` and `./setup_plexlcd.sh configure`, not manual editing.
+Most users should start with `./setup_plexlcd.sh install`, not manual editing.
 Start from [.env.example](.env.example) only if you want to manage `.env` yourself.
 
 Most important values:
@@ -97,7 +103,7 @@ Notes:
 
 - `POWER_SAVE_MODE` defaults to `1`. Set `POWER_SAVE_MODE=0` for more frequent updates.
 - If buttons do not trigger, try overriding `GPIOZERO_PIN_FACTORY` to `rpigpio` or `lgpio` explicitly.
-- The installed systemd service writes stdout/stderr to `/run/plexlcd/service.log`, which lives in RAM and is cleared on reboot.
+- The installed systemd service logs to systemd journal. Follow it with `journalctl -u plexlcd.service -f`.
 - The service also sets `PYTHONDONTWRITEBYTECODE=1` to avoid runtime `__pycache__` writes.
 - If `configure` does not find your player, start playback on the Pi first and rerun `./setup_plexlcd.sh configure`.
 
