@@ -10,20 +10,15 @@ When nothing is playing, it shows a clock and weather.
 Run these commands from this folder:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
 chmod +x setup_plexlcd.sh
-./setup_plexlcd.sh install
-./setup_plexlcd.sh configure
-./setup_plexlcd.sh test
-.venv/bin/python plexlcd.py
+./setup_plexlcd.sh guided
 ```
+
+`guided` is the recommended first-time path. It installs packages, creates `.env`, tests Plex connectivity, offers to save the active player name from current Plex sessions, and can install the systemd service for you.
 
 If everything looks good, install it as a service:
 
 ```bash
-./setup_plexlcd.sh service
 systemctl status plexlcd.service
 ```
 
@@ -40,7 +35,7 @@ systemctl status plexlcd.service
 - A working display device (usually `/dev/fb1`)
 - Plex server URL
 - Plex token
-- Plex player name exactly as shown in Plex sessions
+- Plex player name exactly as shown in Plex sessions, or let `./setup_plexlcd.sh test` save it while playback is active
 
 ## Screen Compatibility
 
@@ -71,13 +66,14 @@ Recommended adaptation flow:
 ## Configuration
 
 The app reads `.env` in this folder.
-Start from [.env.example](.env.example) if needed.
+Most users should start with `./setup_plexlcd.sh guided`, not manual editing.
+Start from [.env.example](.env.example) only if you want to manage `.env` yourself.
 
 Most important values:
 
 - `PLEX_SERVER` (example: `http://192.168.1.200:32400`)
 - `PLEX_TOKEN`
-- `PLAYER_NAME`
+- `PLAYER_NAME` (can be filled automatically by `./setup_plexlcd.sh test`)
 - `LATITUDE`, `LONGITUDE`, `TIMEZONE`
 - `FB_DEVICE`, `WIDTH`, `HEIGHT`
 
@@ -99,6 +95,9 @@ Notes:
 
 - `POWER_SAVE_MODE` defaults to `1`. Set `POWER_SAVE_MODE=0` for more frequent updates.
 - If buttons do not trigger, try overriding `GPIOZERO_PIN_FACTORY` to `rpigpio` or `lgpio` explicitly.
+- The installed systemd service writes stdout/stderr to `/run/plexlcd/service.log`, which lives in RAM and is cleared on reboot.
+- The service also sets `PYTHONDONTWRITEBYTECODE=1` to avoid runtime `__pycache__` writes.
+- If `guided` or `test` does not find your player, start playback on the Pi first and rerun `./setup_plexlcd.sh test`.
 
 ## Daily Commands
 

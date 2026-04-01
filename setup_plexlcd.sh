@@ -98,6 +98,13 @@ prompt_yes_no() {
   [[ "$answer" == "y" || "$answer" == "yes" ]]
 }
 
+quote_env_value() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  printf '"%s"' "$value"
+}
+
 load_env_file() {
   local file="$1"
   local line key value
@@ -136,6 +143,33 @@ load_env_file() {
   done < "$file"
 }
 
+upsert_env_value() {
+  local key="$1"
+  local value="$2"
+  local tmp_file line replaced=0
+  local quoted_value
+  quoted_value="$(quote_env_value "$value")"
+  tmp_file="$(mktemp "${ENV_FILE}.XXXXXX")"
+
+  if [[ -f "$ENV_FILE" ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      if [[ "$line" == "$key="* ]]; then
+        printf '%s=%s\n' "$key" "$quoted_value" >>"$tmp_file"
+        replaced=1
+      else
+        printf '%s\n' "$line" >>"$tmp_file"
+      fi
+    done < "$ENV_FILE"
+  fi
+
+  if [[ "$replaced" -eq 0 ]]; then
+    printf '%s=%s\n' "$key" "$quoted_value" >>"$tmp_file"
+  fi
+
+  mv "$tmp_file" "$ENV_FILE"
+  chmod 600 "$ENV_FILE" || true
+}
+
 write_env() {
   mkdir -p "$APP_DIR"
 
@@ -147,7 +181,7 @@ write_env() {
 
   # Baseline defaults (or existing values when re-running configure)
   plex_host="${PLEX_SERVER:-http://plex.local:32400}"
-  player_name="${PLAYER_NAME:-Plexamp Pi Zero}"
+  player_name="${PLAYER_NAME:-}"
   plex_token="${PLEX_TOKEN:-}"
   latitude="${LATITUDE:-0.0000}"
   longitude="${LONGITUDE:-0.0000}"
@@ -172,9 +206,8 @@ write_env() {
   startup_log="${PLEXLCD_STARTUP_LOG:-/tmp/plexlcd-startup.log}"
   gpiozero_pin_factory="${GPIOZERO_PIN_FACTORY:-auto}"
 
-  log "Minimal setup (required fields only)"
+  log "Basic setup (only the essentials)"
   plex_host=$(prompt_default "Plex server URL" "$plex_host")
-  player_name=$(prompt_default "Exact Plexamp player name" "$player_name")
   if [[ -n "$plex_token" ]] && prompt_yes_no "Keep existing Plex token" 1; then
     :
   else
@@ -240,7 +273,7 @@ EOFENV
 
   chmod 600 "$ENV_FILE"
   log "Wrote $ENV_FILE"
-  log "Next: $(basename "$0") test"
+  log "Next: start playback on the Pi, then run $(basename "$0") test to verify Plex and save PLAYER_NAME automatically."
 }
 
 test_plex() {
@@ -284,11 +317,71 @@ test_plex() {
     printf 'Players seen in current sessions:\n'
     jq -r '.MediaContainer.Metadata // [] | (if type == "array" then . else [.] end)[] | [.Player.title, .Player.device, .Player.state, .title, .grandparentTitle] | @tsv' "$sessions_tmp" \
       | awk -F '\t' '{printf("- player=%s | device=%s | state=%s | track=%s | artist=%s\n", $1, $2, $3, $4, $5)}' || true
+
+    local -a players
+    mapfile -t players < <(
+      jq -r '.MediaContainer.Metadata // [] | (if type == "array" then . else [.] end)[] | (.Player.title // .Player.name // empty)' "$sessions_tmp" \
+        | awk 'NF && !seen[$0]++'
+    )
+
+    if [[ "${#players[@]}" -eq 0 ]]; then
+      log "No active players found. Start playback on the Pi and run $(basename "$0") test again to save PLAYER_NAME."
+    elif [[ "${#players[@]}" -eq 1 ]]; then
+      if [[ "${PLAYER_NAME:-}" == "${players[0]}" ]]; then
+        log "PLAYER_NAME already matches the active player: ${players[0]}"
+      elif prompt_yes_no "Use '${players[0]}' as PLAYER_NAME in $ENV_FILE" 0; then
+        upsert_env_value "PLAYER_NAME" "${players[0]}"
+        export PLAYER_NAME="${players[0]}"
+        log "Saved PLAYER_NAME='${players[0]}' to $ENV_FILE"
+      fi
+    else
+      local i choice selected_player
+      printf '\nSelect the player this screen should follow:\n'
+      for i in "${!players[@]}"; do
+        printf '  %d) %s' "$((i + 1))" "${players[$i]}"
+        if [[ "${PLAYER_NAME:-}" == "${players[$i]}" ]]; then
+          printf ' (current)'
+        fi
+        printf '\n'
+      done
+      read -r -p "Choose player number to save to .env [Enter to keep current]: " choice || true
+      if [[ -n "${choice:-}" ]]; then
+        if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#players[@]} )); then
+          selected_player="${players[$((choice - 1))]}"
+          upsert_env_value "PLAYER_NAME" "$selected_player"
+          export PLAYER_NAME="$selected_player"
+          log "Saved PLAYER_NAME='$selected_player' to $ENV_FILE"
+        else
+          log "Ignoring invalid selection; keeping current PLAYER_NAME"
+        fi
+      fi
+    fi
   else
     printf 'Plex sessions response received (jq not installed, cannot parse player list).\n'
     printf 'Install jq or run: %s install\n' "$(basename "$0")"
   fi
   rm -f "$sessions_tmp" "$err_tmp"
+}
+
+guided_setup() {
+  log "Guided setup installs dependencies, writes .env, tests Plex, and can install the service."
+  install_packages
+  prepare_local_files
+  write_env
+  printf '\nBefore the next step, start playback on the Pi if you want automatic player detection.\n\n'
+  test_plex
+
+  load_env_file "$ENV_FILE" || true
+  if [[ -z "${PLAYER_NAME:-}" ]]; then
+    log "PLAYER_NAME is still empty. Start playback on the Pi, then rerun: $(basename "$0") test"
+    return 0
+  fi
+
+  if prompt_yes_no "Install and start the systemd service now" 0; then
+    install_service
+  else
+    log "Next: $(basename "$0") service"
+  fi
 }
 
 show_framebuffers() {
@@ -345,6 +438,11 @@ Type=simple
 User=root
 WorkingDirectory=$APP_DIR
 EnvironmentFile=$ENV_FILE
+Environment=PYTHONDONTWRITEBYTECODE=1
+RuntimeDirectory=plexlcd
+RuntimeDirectoryPreserve=restart
+StandardOutput=append:/run/plexlcd/service.log
+StandardError=inherit
 ExecStart=$VENV_PYTHON $APP_DIR/plexlcd.py
 Restart=always
 RestartSec=5
@@ -364,13 +462,14 @@ Usage: $(basename "$0") [command]
 
 Commands:
   help            Show token/player-name instructions
+  guided          Recommended first-time setup (install, configure, test, optional service)
   install         Install dependencies
   venv            Create/update .venv and install Python dependencies
   configure       Guided setup (minimal prompts + optional advanced)
-  test            Test Plex connectivity and list players from current sessions
+  test            Test Plex connectivity, list players, and optionally save PLAYER_NAME
   fb              Show framebuffer devices
   service         Install and start systemd service
-  all             Run install, configure, test, fb, and service
+  all             Backward-compatible alias for guided
 EOFUSAGE
 }
 
@@ -378,29 +477,21 @@ main() {
   local cmd="${1:-}"
   if [[ -z "$cmd" ]]; then
     usage
-    printf '\nNext steps:\n'
-    printf '  1) %s configure\n' "$(basename "$0")"
-    printf '  2) %s test\n' "$(basename "$0")"
-    printf '  3) %s service\n' "$(basename "$0")"
+    printf '\nRecommended first-time setup:\n'
+    printf '  %s guided\n' "$(basename "$0")"
     return 0
   fi
 
   case "$cmd" in
     help) show_token_help ;;
+    guided) guided_setup ;;
     install) install_packages; prepare_local_files ;;
     venv) ensure_venv ;;
     configure) write_env ;;
     test) test_plex ;;
     fb) show_framebuffers ;;
     service) install_service ;;
-    all)
-      install_packages
-      prepare_local_files
-      write_env
-      test_plex
-      show_framebuffers
-      install_service
-      ;;
+    all) guided_setup ;;
     *) usage; exit 1 ;;
   esac
 }
