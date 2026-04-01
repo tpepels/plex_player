@@ -11,15 +11,17 @@ Run these commands from this folder:
 
 ```bash
 chmod +x setup_plexlcd.sh
-./setup_plexlcd.sh guided
+./setup_plexlcd.sh install
+./setup_plexlcd.sh configure
 ```
 
-`guided` is the recommended first-time path. It installs packages, creates `.env`, tests Plex connectivity, offers to save the active player name from current Plex sessions, and can install the systemd service for you.
+`install` handles packages and the Python environment. `configure` writes `.env`, detects the active Plex player from current Plex sessions, and can install the systemd service for you.
 
-If everything looks good, install it as a service:
+If you chose service installation during `configure`, you can check it with:
 
 ```bash
 systemctl status plexlcd.service
+tail -f /run/plexlcd/service.log
 ```
 
 ## What You Get
@@ -35,7 +37,7 @@ systemctl status plexlcd.service
 - A working display device (usually `/dev/fb1`)
 - Plex server URL
 - Plex token
-- Plex player name exactly as shown in Plex sessions, or let `./setup_plexlcd.sh test` save it while playback is active
+- Plex player name exactly as shown in Plex sessions, or let `./setup_plexlcd.sh configure` save it while playback is active
 
 ## Screen Compatibility
 
@@ -66,14 +68,14 @@ Recommended adaptation flow:
 ## Configuration
 
 The app reads `.env` in this folder.
-Most users should start with `./setup_plexlcd.sh guided`, not manual editing.
+Most users should start with `./setup_plexlcd.sh install` and `./setup_plexlcd.sh configure`, not manual editing.
 Start from [.env.example](.env.example) only if you want to manage `.env` yourself.
 
 Most important values:
 
 - `PLEX_SERVER` (example: `http://192.168.1.200:32400`)
 - `PLEX_TOKEN`
-- `PLAYER_NAME` (can be filled automatically by `./setup_plexlcd.sh test`)
+- `PLAYER_NAME` (can be filled automatically by `./setup_plexlcd.sh configure`)
 - `LATITUDE`, `LONGITUDE`, `TIMEZONE`
 - `FB_DEVICE`, `WIDTH`, `HEIGHT`
 
@@ -97,7 +99,7 @@ Notes:
 - If buttons do not trigger, try overriding `GPIOZERO_PIN_FACTORY` to `rpigpio` or `lgpio` explicitly.
 - The installed systemd service writes stdout/stderr to `/run/plexlcd/service.log`, which lives in RAM and is cleared on reboot.
 - The service also sets `PYTHONDONTWRITEBYTECODE=1` to avoid runtime `__pycache__` writes.
-- If `guided` or `test` does not find your player, start playback on the Pi first and rerun `./setup_plexlcd.sh test`.
+- If `configure` does not find your player, start playback on the Pi first and rerun `./setup_plexlcd.sh configure`.
 
 ## Daily Commands
 
@@ -111,7 +113,7 @@ make run
 
 ## Troubleshooting
 
-`./setup_plexlcd.sh test` fails with Unauthorized:
+`./setup_plexlcd.sh configure` fails with Unauthorized during Plex detection:
 - Check `PLEX_SERVER`
 - Replace `PLEX_TOKEN` with a valid token
 

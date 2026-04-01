@@ -273,7 +273,6 @@ EOFENV
 
   chmod 600 "$ENV_FILE"
   log "Wrote $ENV_FILE"
-  log "Next: start playback on the Pi, then run $(basename "$0") test to verify Plex and save PLAYER_NAME automatically."
 }
 
 test_plex() {
@@ -325,7 +324,7 @@ test_plex() {
     )
 
     if [[ "${#players[@]}" -eq 0 ]]; then
-      log "No active players found. Start playback on the Pi and run $(basename "$0") test again to save PLAYER_NAME."
+      log "No active players found. Start playback on the Pi and rerun $(basename "$0") configure to save PLAYER_NAME."
     elif [[ "${#players[@]}" -eq 1 ]]; then
       if [[ "${PLAYER_NAME:-}" == "${players[0]}" ]]; then
         log "PLAYER_NAME already matches the active player: ${players[0]}"
@@ -363,24 +362,27 @@ test_plex() {
   rm -f "$sessions_tmp" "$err_tmp"
 }
 
-guided_setup() {
-  log "Guided setup installs dependencies, writes .env, tests Plex, and can install the service."
-  install_packages
+configure_app() {
+  log "Configure writes .env, detects the active Plex player, and can install the service."
   prepare_local_files
+  if [[ ! -x "$VENV_PYTHON" ]]; then
+    log "Virtual environment not found. Run $(basename "$0") install first."
+    return 1
+  fi
   write_env
   printf '\nBefore the next step, start playback on the Pi if you want automatic player detection.\n\n'
   test_plex
 
   load_env_file "$ENV_FILE" || true
   if [[ -z "${PLAYER_NAME:-}" ]]; then
-    log "PLAYER_NAME is still empty. Start playback on the Pi, then rerun: $(basename "$0") test"
+    log "PLAYER_NAME is still empty. Start playback on the Pi, then rerun: $(basename "$0") configure"
     return 0
   fi
 
   if prompt_yes_no "Install and start the systemd service now" 0; then
     install_service
   else
-    log "Next: $(basename "$0") service"
+    log "Configuration complete. Rerun $(basename "$0") configure later if you want to install the service."
   fi
 }
 
@@ -461,15 +463,8 @@ usage() {
 Usage: $(basename "$0") [command]
 
 Commands:
-  help            Show token/player-name instructions
-  guided          Recommended first-time setup (install, configure, test, optional service)
-  install         Install dependencies
-  venv            Create/update .venv and install Python dependencies
-  configure       Guided setup (minimal prompts + optional advanced)
-  test            Test Plex connectivity, list players, and optionally save PLAYER_NAME
-  fb              Show framebuffer devices
-  service         Install and start systemd service
-  all             Backward-compatible alias for guided
+  install         Install system packages, create .venv, and prepare the app
+  configure       Write .env, detect the player, and optionally install the service
 EOFUSAGE
 }
 
@@ -477,21 +472,15 @@ main() {
   local cmd="${1:-}"
   if [[ -z "$cmd" ]]; then
     usage
-    printf '\nRecommended first-time setup:\n'
-    printf '  %s guided\n' "$(basename "$0")"
+    printf '\nRecommended setup:\n'
+    printf '  %s install\n' "$(basename "$0")"
+    printf '  %s configure\n' "$(basename "$0")"
     return 0
   fi
 
   case "$cmd" in
-    help) show_token_help ;;
-    guided) guided_setup ;;
     install) install_packages; prepare_local_files ;;
-    venv) ensure_venv ;;
-    configure) write_env ;;
-    test) test_plex ;;
-    fb) show_framebuffers ;;
-    service) install_service ;;
-    all) guided_setup ;;
+    configure) configure_app ;;
     *) usage; exit 1 ;;
   esac
 }
