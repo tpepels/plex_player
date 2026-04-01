@@ -9,21 +9,6 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 VENV_DIR="$APP_DIR/.venv"
 VENV_PYTHON="$VENV_DIR/bin/python"
 
-ensure_venv() {
-  if [[ ! -x "$VENV_PYTHON" ]]; then
-    log "Creating virtual environment at $VENV_DIR"
-    "$PYTHON_BIN" -m venv "$VENV_DIR"
-  fi
-
-  log "Installing/updating Python dependencies in .venv"
-  "$VENV_PYTHON" -m pip install --upgrade pip >/dev/null
-  if [[ -f "$APP_DIR/requirements.txt" ]]; then
-    "$VENV_PYTHON" -m pip install -r "$APP_DIR/requirements.txt"
-  else
-    "$VENV_PYTHON" -m pip install requests pillow numpy
-  fi
-}
-
 log() {
   printf '\n[%s] %s\n' "$(date '+%H:%M:%S')" "$*"
 }
@@ -36,19 +21,74 @@ require_root_for_apt() {
   fi
 }
 
+have_apt_pkg() {
+  local pkg="$1"
+  apt-cache show "$pkg" >/dev/null 2>&1
+}
+
+ensure_venv() {
+  if [[ ! -x "$VENV_PYTHON" ]]; then
+    log "Creating virtual environment at $VENV_DIR (with system site packages)"
+    "$PYTHON_BIN" -m venv --system-site-packages "$VENV_DIR"
+  fi
+
+  log "Installing/updating Python dependencies in .venv"
+  "$VENV_PYTHON" -m pip install --upgrade pip >/dev/null
+  if [[ -f "$APP_DIR/requirements.txt" ]]; then
+    "$VENV_PYTHON" -m pip install -r "$APP_DIR/requirements.txt"
+  else
+    "$VENV_PYTHON" -m pip install requests pillow numpy
+  fi
+
+  # Optional GPIO compatibility helpers. Do not fail the install if one path is unavailable.
+  if ! "$VENV_PYTHON" -c 'import lgpio' >/dev/null 2>&1; then
+    if have_apt_pkg python3-lgpio; then
+      log "python3-lgpio is available via apt; recreating venv with system packages is enough"
+    elif "$VENV_PYTHON" -m pip show lgpio >/dev/null 2>&1; then
+      :
+    else
+      log "lgpio Python module not present; continuing without forcing a source build"
+    fi
+  fi
+}
+
 install_packages() {
   require_root_for_apt
   if ! command -v apt-get >/dev/null 2>&1; then
     log "apt-get not found. Install dependencies manually for your distro."
     return 1
   fi
+
   log "Installing packages"
   $SUDO apt-get update
-  $SUDO apt-get install -y \
-    python3 python3-pip python3-venv python3-requests python3-pil python3-gpiozero \
-    curl jq fonts-dejavu-core fonts-noto-core fbset fbi
 
-  ensure_venv
+  local packages=(
+    python3 python3-pip python3-venv python3-dev
+    python3-requests python3-pil python3-gpiozero python3-rpi.gpio python3-pigpio
+    python3-libgpiod gpiod curl jq fonts-dejavu-core fonts-noto-core fbset fbi
+  )
+
+  if have_apt_pkg python3-lgpio; then
+    packages+=(python3-lgpio)
+  fi
+  if have_apt_pkg swig; then
+    packages+=(swig)
+  fi
+
+  $SUDO apt-get install -y "${packages[@]}"
+
+  # rpi-lgpio docs warn not to keep python3-rpi.gpio and rpi-lgpio in the same environment.
+  # Only install rpi-lgpio if explicitly requested and python3-lgpio is present.
+  if [[ "${INSTALL_RPI_LGPIO:-0}" == "1" ]]; then
+    log "INSTALL_RPI_LGPIO=1 detected; installing rpi-lgpio into the venv"
+    if have_apt_pkg python3-rpi.gpio; then
+      $SUDO apt-get remove -y python3-rpi.gpio || true
+    fi
+    ensure_venv
+    "$VENV_PYTHON" -m pip install rpi-lgpio
+  else
+    ensure_venv
+  fi
 }
 
 prepare_local_files() {
@@ -179,7 +219,6 @@ write_env() {
 
   local plex_host player_name plex_token latitude longitude timezone location_name fb_device width height poll_seconds weather_refresh display_x_shift buttons_enabled button_play_pause_pin button_stop_pin button_next_pin button_label_play_y_percent button_label_stop_y_percent button_label_next_y_percent progress_update_seconds no_track_grace_seconds startup_trace startup_log gpiozero_pin_factory
 
-  # Baseline defaults (or existing values when re-running configure)
   plex_host="${PLEX_SERVER:-http://plex.local:32400}"
   player_name="${PLAYER_NAME:-}"
   plex_token="${PLEX_TOKEN:-}"
@@ -204,7 +243,7 @@ write_env() {
   no_track_grace_seconds="${NO_TRACK_GRACE_SECONDS:-4.0}"
   startup_trace="${PLEXLCD_STARTUP_TRACE:-0}"
   startup_log="${PLEXLCD_STARTUP_LOG:-/tmp/plexlcd-startup.log}"
-  gpiozero_pin_factory="${GPIOZERO_PIN_FACTORY:-auto}"
+  gpiozero_pin_factory="${GPIOZERO_PIN_FACTORY:-lgpio}"
 
   log "Basic setup (only the essentials)"
   plex_host=$(prompt_default "Plex server URL" "$plex_host")
@@ -239,6 +278,7 @@ write_env() {
     weather_refresh=$(prompt_default "Weather refresh seconds" "$weather_refresh")
     progress_update_seconds=$(prompt_default "Progress update seconds" "$progress_update_seconds")
     no_track_grace_seconds=$(prompt_default "No-track grace seconds" "$no_track_grace_seconds")
+    gpiozero_pin_factory=$(prompt_default "GPIOZERO_PIN_FACTORY" "$gpiozero_pin_factory")
   else
     log "Using defaults for weather/display/buttons. You can re-run configure anytime."
   fi
@@ -441,10 +481,11 @@ User=root
 WorkingDirectory=$APP_DIR
 EnvironmentFile=$ENV_FILE
 Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
 RuntimeDirectory=plexlcd
 RuntimeDirectoryPreserve=restart
-StandardOutput=append:/run/plexlcd/service.log
-StandardError=inherit
+StandardOutput=journal
+StandardError=journal
 ExecStart=$VENV_PYTHON $APP_DIR/plexlcd.py
 Restart=always
 RestartSec=5
@@ -465,6 +506,9 @@ Usage: $(basename "$0") [command]
 Commands:
   install         Install system packages, create .venv, and prepare the app
   configure       Write .env, detect the player, and optionally install the service
+  service         Reinstall/restart only the systemd service from the current tree
+  framebuffers    Show detected framebuffer devices
+  token-help      Print Plex token instructions
 EOFUSAGE
 }
 
@@ -481,6 +525,9 @@ main() {
   case "$cmd" in
     install) install_packages; prepare_local_files ;;
     configure) configure_app ;;
+    service) install_service ;;
+    framebuffers) show_framebuffers ;;
+    token-help) show_token_help ;;
     *) usage; exit 1 ;;
   esac
 }
