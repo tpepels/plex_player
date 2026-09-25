@@ -7,6 +7,7 @@ test:
 
 lint:
 	$(PYTHON) -m compileall -q core services tests plexlcd.py
+	bash -n setup_plexlcd.sh
 
 run:
 	$(PYTHON) plexlcd.py

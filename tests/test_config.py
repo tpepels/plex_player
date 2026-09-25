@@ -41,6 +41,30 @@ class ConfigTests(unittest.TestCase):
             if os.path.exists(fb_path):
                 os.unlink(fb_path)
 
+    def test_missing_framebuffer_is_deferred_to_runtime_wait(self):
+        env = {
+            "PLEX_SERVER": "http://example:32400",
+            "PLEX_TOKEN": "token",
+            "PLAYER_NAME": "Player",
+            "LATITUDE": "0.0",
+            "LONGITUDE": "0.0",
+            "TIMEZONE": "UTC",
+            "FB_DEVICE": "/definitely/not/present/fb-test",
+            "WIDTH": "320",
+            "HEIGHT": "240",
+            "BUTTONS_ENABLED": "0",
+            "POLL_SECONDS": "3",
+            "WEATHER_REFRESH_SECONDS": "900",
+            "PROGRESS_UPDATE_SECONDS": "5",
+            "NO_TRACK_GRACE_SECONDS": "4.0",
+            "DISPLAY_X_SHIFT": "0",
+        }
+
+        with patch.dict(os.environ, env, clear=False):
+            _cfg, errors = Config.from_env(button_available=False)
+
+        self.assertEqual(errors, [])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -285,37 +285,38 @@ write_env() {
     log "Using defaults for weather/display/buttons. You can re-run configure anytime."
   fi
 
-  cat > "$ENV_FILE" <<EOFENV
-PLEX_SERVER="$plex_host"
-PLEX_TOKEN="$plex_token"
-PLEX_VERIFY_TLS="$plex_verify_tls"
-PLAYER_NAME="$player_name"
-LATITUDE="$latitude"
-LONGITUDE="$longitude"
-TIMEZONE="$timezone"
-LOCATION_NAME="$location_name"
-FB_DEVICE="$fb_device"
-WIDTH="$width"
-HEIGHT="$height"
-DISPLAY_X_SHIFT="$display_x_shift"
-BUTTONS_ENABLED="$buttons_enabled"
-BUTTON_PLAY_PAUSE_PIN="$button_play_pause_pin"
-BUTTON_STOP_PIN="$button_stop_pin"
-BUTTON_NEXT_PIN="$button_next_pin"
-BUTTON_LABEL_PLAY_Y_PERCENT="$button_label_play_y_percent"
-BUTTON_LABEL_STOP_Y_PERCENT="$button_label_stop_y_percent"
-BUTTON_LABEL_NEXT_Y_PERCENT="$button_label_next_y_percent"
-POLL_SECONDS="$poll_seconds"
-WEATHER_REFRESH_SECONDS="$weather_refresh"
-PROGRESS_UPDATE_SECONDS="$progress_update_seconds"
-NO_TRACK_GRACE_SECONDS="$no_track_grace_seconds"
-PLEXLCD_STARTUP_TRACE="$startup_trace"
-PLEXLCD_STARTUP_LOG="$startup_log"
-GPIOZERO_PIN_FACTORY="$gpiozero_pin_factory"
-EOFENV
+  # Update the settings managed by this wizard without replacing the whole file.
+  # This preserves optional/manual settings such as POWER_SAVE_MODE, font paths,
+  # timeline polling, debug logging, and controller identifiers.
+  upsert_env_value "PLEX_SERVER" "$plex_host"
+  upsert_env_value "PLEX_TOKEN" "$plex_token"
+  upsert_env_value "PLEX_VERIFY_TLS" "$plex_verify_tls"
+  upsert_env_value "PLAYER_NAME" "$player_name"
+  upsert_env_value "LATITUDE" "$latitude"
+  upsert_env_value "LONGITUDE" "$longitude"
+  upsert_env_value "TIMEZONE" "$timezone"
+  upsert_env_value "LOCATION_NAME" "$location_name"
+  upsert_env_value "FB_DEVICE" "$fb_device"
+  upsert_env_value "WIDTH" "$width"
+  upsert_env_value "HEIGHT" "$height"
+  upsert_env_value "DISPLAY_X_SHIFT" "$display_x_shift"
+  upsert_env_value "BUTTONS_ENABLED" "$buttons_enabled"
+  upsert_env_value "BUTTON_PLAY_PAUSE_PIN" "$button_play_pause_pin"
+  upsert_env_value "BUTTON_STOP_PIN" "$button_stop_pin"
+  upsert_env_value "BUTTON_NEXT_PIN" "$button_next_pin"
+  upsert_env_value "BUTTON_LABEL_PLAY_Y_PERCENT" "$button_label_play_y_percent"
+  upsert_env_value "BUTTON_LABEL_STOP_Y_PERCENT" "$button_label_stop_y_percent"
+  upsert_env_value "BUTTON_LABEL_NEXT_Y_PERCENT" "$button_label_next_y_percent"
+  upsert_env_value "POLL_SECONDS" "$poll_seconds"
+  upsert_env_value "WEATHER_REFRESH_SECONDS" "$weather_refresh"
+  upsert_env_value "PROGRESS_UPDATE_SECONDS" "$progress_update_seconds"
+  upsert_env_value "NO_TRACK_GRACE_SECONDS" "$no_track_grace_seconds"
+  upsert_env_value "PLEXLCD_STARTUP_TRACE" "$startup_trace"
+  upsert_env_value "PLEXLCD_STARTUP_LOG" "$startup_log"
+  upsert_env_value "GPIOZERO_PIN_FACTORY" "$gpiozero_pin_factory"
 
   chmod 600 "$ENV_FILE"
-  log "Wrote $ENV_FILE"
+  log "Updated $ENV_FILE"
 }
 
 test_plex() {
@@ -509,7 +510,8 @@ WantedBy=multi-user.target
 EOFUNIT
 
   $SUDO systemctl daemon-reload
-  $SUDO systemctl enable --now plexlcd.service
+  $SUDO systemctl enable plexlcd.service
+  $SUDO systemctl restart plexlcd.service
   $SUDO systemctl status --no-pager plexlcd.service || true
 }
 
