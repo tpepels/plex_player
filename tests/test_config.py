@@ -14,6 +14,7 @@ class ConfigTests(unittest.TestCase):
         env = {
             "PLEX_SERVER": "http://example:32400",
             "PLEX_TOKEN": "token",
+            "PLEX_VERIFY_TLS": "0",
             "PLAYER_NAME": "Player",
             "LATITUDE": "0.0",
             "LONGITUDE": "0.0",
@@ -34,6 +35,7 @@ class ConfigTests(unittest.TestCase):
                 cfg, errors = Config.from_env(button_available=False)
 
             self.assertTrue(cfg.buttons_enabled)
+            self.assertFalse(cfg.plex_verify_tls)
             self.assertEqual(errors, [])
         finally:
             if os.path.exists(fb_path):
