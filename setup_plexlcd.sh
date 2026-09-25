@@ -217,9 +217,10 @@ write_env() {
     load_env_file "$ENV_FILE" || true
   fi
 
-  local plex_host player_name plex_token latitude longitude timezone location_name fb_device width height poll_seconds weather_refresh display_x_shift buttons_enabled button_play_pause_pin button_stop_pin button_next_pin button_label_play_y_percent button_label_stop_y_percent button_label_next_y_percent progress_update_seconds no_track_grace_seconds startup_trace startup_log gpiozero_pin_factory
+  local plex_host plex_verify_tls player_name plex_token latitude longitude timezone location_name fb_device width height poll_seconds weather_refresh display_x_shift buttons_enabled button_play_pause_pin button_stop_pin button_next_pin button_label_play_y_percent button_label_stop_y_percent button_label_next_y_percent progress_update_seconds no_track_grace_seconds startup_trace startup_log gpiozero_pin_factory
 
   plex_host="${PLEX_SERVER:-http://plex.local:32400}"
+  plex_verify_tls="${PLEX_VERIFY_TLS:-1}"
   player_name="${PLAYER_NAME:-}"
   plex_token="${PLEX_TOKEN:-}"
   latitude="${LATITUDE:-0.0000}"
@@ -278,6 +279,7 @@ write_env() {
     weather_refresh=$(prompt_default "Weather refresh seconds" "$weather_refresh")
     progress_update_seconds=$(prompt_default "Progress update seconds" "$progress_update_seconds")
     no_track_grace_seconds=$(prompt_default "No-track grace seconds" "$no_track_grace_seconds")
+    plex_verify_tls=$(prompt_default "Verify Plex HTTPS certificate (0/1)" "$plex_verify_tls")
     gpiozero_pin_factory=$(prompt_default "GPIOZERO_PIN_FACTORY" "$gpiozero_pin_factory")
   else
     log "Using defaults for weather/display/buttons. You can re-run configure anytime."
@@ -286,6 +288,7 @@ write_env() {
   cat > "$ENV_FILE" <<EOFENV
 PLEX_SERVER="$plex_host"
 PLEX_TOKEN="$plex_token"
+PLEX_VERIFY_TLS="$plex_verify_tls"
 PLAYER_NAME="$player_name"
 LATITUDE="$latitude"
 LONGITUDE="$longitude"
@@ -329,11 +332,15 @@ test_plex() {
   log "Testing Plex connectivity"
 
   local url sessions_tmp err_tmp
+  local -a curl_tls_args=()
+  if [[ "${PLEX_VERIFY_TLS:-1}" =~ ^(0|false|no|off)$ ]]; then
+    curl_tls_args=(-k)
+  fi
   sessions_tmp="$(mktemp /tmp/plex_sessions_test.XXXXXX.json)"
   err_tmp="$(mktemp /tmp/plex_sessions_test.XXXXXX.err)"
 
   url="$PLEX_SERVER/status/sessions"
-  if ! curl -fsS \
+  if ! curl "${curl_tls_args[@]}" -fsS \
     -H "Accept: application/json" \
     -H "X-Plex-Token: $PLEX_TOKEN" \
     "$url" >"$sessions_tmp" 2>"$err_tmp"; then
