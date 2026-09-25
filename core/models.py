@@ -69,6 +69,7 @@ class LoopState:
 
     last_weather: Optional[WeatherInfo] = None
     last_weather_fetch: float = 0.0
+    next_weather_retry_ts: float = 0.0
     last_thumb_path: Optional[str] = None
     last_track_title: Optional[str] = None
     last_track_identity: Optional[str] = None
