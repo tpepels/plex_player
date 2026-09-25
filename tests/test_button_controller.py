@@ -61,7 +61,7 @@ class ButtonControllerTests(unittest.TestCase):
 
         dispatch_playback_command(
             "stop",
-            config=self._config(),
+            config=self._config(plex_verify_tls=False),
             runtime_state=runtime,
             refresh_event=refresh,
             command_counter_lock=threading.Lock(),
@@ -76,6 +76,7 @@ class ButtonControllerTests(unittest.TestCase):
 
         self.assertEqual(recorded["action"], "stop")
         self.assertEqual(recorded["target_client_id"], "client-1")
+        self.assertFalse(recorded["verify_tls"])
         self.assertTrue(refresh.is_set())
         self.assertEqual(runtime.toast_text, "stop")
 
