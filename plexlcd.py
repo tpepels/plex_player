@@ -233,12 +233,14 @@ def apply_power_save_tunings() -> None:
     global TIMELINE_POLL_MIN_INTERVAL_SECONDS
     global COVER_RETRY_SECONDS
     global LOW_POWER_COVER_RENDER
+    global NO_TRACK_GRACE_SECONDS
 
     POLL_SECONDS = max(float(POLL_SECONDS), 6.0)
     WEATHER_REFRESH_SECONDS = max(float(WEATHER_REFRESH_SECONDS), 1800.0)
     PROGRESS_UPDATE_SECONDS = max(float(PROGRESS_UPDATE_SECONDS), 12.0)
     TIMELINE_POLL_MIN_INTERVAL_SECONDS = max(float(TIMELINE_POLL_MIN_INTERVAL_SECONDS), 15.0)
     COVER_RETRY_SECONDS = max(float(COVER_RETRY_SECONDS), 45.0)
+    NO_TRACK_GRACE_SECONDS = max(float(NO_TRACK_GRACE_SECONDS), float(POLL_SECONDS) + 2.0)
     LOW_POWER_COVER_RENDER = True
 
 
@@ -711,18 +713,28 @@ def render_now_playing(cover: Image.Image, track: PlexTrack, elapsed_ms: Optiona
 
 # Main loop orchestration helpers
 def refresh_weather_if_due(state: LoopState, now_ts: float) -> None:
-    """Refresh cached weather on configured interval only."""
+    """Refresh weather immediately on startup and retain cached data on transient failures."""
 
-    if now_ts - state.last_weather_fetch > WEATHER_REFRESH_SECONDS:
-        state.last_weather = fetch_weather(
-            latitude=LATITUDE,
-            longitude=LONGITUDE,
-            timezone=TIMEZONE,
-            timeout=HTTP_TIMEOUT,
-            log_warn=lambda msg: log_message("weather", msg, level="WARN", stderr=True),
-            log_error=lambda msg, exc: log_exception("weather", msg, exc),
-        )
+    if now_ts < state.next_weather_retry_ts:
+        return
+    if state.last_weather is not None and now_ts - state.last_weather_fetch <= WEATHER_REFRESH_SECONDS:
+        return
+
+    weather = fetch_weather(
+        latitude=LATITUDE,
+        longitude=LONGITUDE,
+        timezone=TIMEZONE,
+        timeout=HTTP_TIMEOUT,
+        log_warn=lambda msg: log_message("weather", msg, level="WARN", stderr=True),
+        log_error=lambda msg, exc: log_exception("weather", msg, exc),
+    )
+    if weather is not None:
+        state.last_weather = weather
         state.last_weather_fetch = now_ts
+        state.next_weather_retry_ts = 0.0
+        return
+
+    state.next_weather_retry_ts = now_ts + min(60.0, float(WEATHER_REFRESH_SECONDS))
 
 
 def render_playing_frame(state: LoopState, track: PlexTrack, now_ts: float) -> None:
