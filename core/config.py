@@ -151,10 +151,8 @@ class Config:
             if not 0 <= label_percent <= 100:
                 errors.append(f"{label_name} must be between 0 and 100")
 
-        if not os.path.exists(cfg.fb_device):
-            errors.append(f"FB_DEVICE '{cfg.fb_device}' does not exist")
-        elif not os.access(cfg.fb_device, os.W_OK):
-            errors.append(f"FB_DEVICE '{cfg.fb_device}' is not writable (need root or group membership)")
+        if not cfg.fb_device:
+            errors.append("FB_DEVICE must not be empty")
 
         try:
             ZoneInfo(cfg.timezone)
