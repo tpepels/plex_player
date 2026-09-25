@@ -53,10 +53,11 @@ def _get_with_retry(
     label: str,
     log_warn: Callable[[str], None],
     log_error: Callable[[str], None],
+    verify_tls: bool = True,
 ):
     for attempt in range(2):
         try:
-            r = http_get(url, params=params, headers=headers, timeout=timeout)
+            r = http_get(url, params=params, headers=headers, timeout=timeout, verify_tls=verify_tls)
             r.raise_for_status()
             return r
         except Exception as exc:
@@ -74,6 +75,7 @@ def fetch_sessions_json(
     timeout: int,
     log_warn: Callable[[str], None],
     log_error: Callable[[str], None],
+    verify_tls: bool = True,
 ) -> Optional[dict]:
     """Fetch active Plex sessions as JSON.
 
@@ -94,6 +96,7 @@ def fetch_sessions_json(
         label="Sessions",
         log_warn=log_warn,
         log_error=log_error,
+        verify_tls=verify_tls,
     )
     return r.json() if r else None
 
@@ -171,6 +174,7 @@ def fetch_cover(
     timeout: int,
     log_warn: Callable[[str], None],
     log_error: Callable[[str], None],
+    verify_tls: bool = True,
 ) -> Optional[Image.Image]:
     """Fetch and resize cover art to framebuffer dimensions.
 
@@ -190,6 +194,7 @@ def fetch_cover(
         label="Cover",
         log_warn=log_warn,
         log_error=log_error,
+        verify_tls=verify_tls,
     )
     if not r:
         return None
@@ -266,6 +271,7 @@ def send_playback_command(
     log_warn: Callable[[str], None],
     log_debug: Callable[[str], None],
     log_error: Callable[[str], None],
+    verify_tls: bool = True,
 ) -> bool:
     """Send a playback command to the active player endpoint.
 
@@ -309,6 +315,7 @@ def send_playback_command(
                 "commandID": command_id,
             },
             timeout=timeout,
+            verify_tls=verify_tls,
         )
         log_debug(f"Response {resp.status_code}: {resp.text[:200]!r}")
         return True

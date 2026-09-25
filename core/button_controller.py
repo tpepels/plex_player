@@ -22,6 +22,7 @@ class ButtonControllerConfig:
     toast_duration_seconds: float
     no_track_grace_seconds: float
     command_confirm_seconds: float
+    plex_verify_tls: bool = True
 
 
 def next_command_id(runtime_state: RuntimeState, command_counter_lock: threading.Lock) -> int:
@@ -60,6 +61,7 @@ def dispatch_playback_command(
         log_warn=log_warn,
         log_debug=log_debug,
         log_error=log_error,
+        verify_tls=config.plex_verify_tls,
     )
     if not sent_ok:
         return

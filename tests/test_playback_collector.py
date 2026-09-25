@@ -22,14 +22,25 @@ class PlaybackCollectorTests(unittest.TestCase):
         runtime = RuntimeState(force_idle_until_ts=2.0)
         loop_state = LoopState(last_player_state="paused", no_track_grace_until_ts=5.0)
         track = self._track()
+        sessions_kwargs = {}
+
+        def fetch_sessions(**kwargs):
+            sessions_kwargs.update(kwargs)
+            return {"ok": True}
 
         collected = collect_playback_snapshot(
             now_ts=10.0,
             loop_state=loop_state,
             runtime_state=runtime,
-            config=PlaybackCollectorConfig("Player", "http://plex.local:32400", "token", 10),
+            config=PlaybackCollectorConfig(
+                "Player",
+                "https://192.168.1.200:32400",
+                "token",
+                10,
+                plex_verify_tls=False,
+            ),
             deps=PlaybackCollectorDeps(
-                fetch_sessions_json=lambda **kwargs: {"ok": True},
+                fetch_sessions_json=fetch_sessions,
                 find_player_track=lambda data, player_name: track,
                 fetch_player_timeline_state=lambda **kwargs: {"state": "paused"},
                 should_poll_timeline=lambda track, last_player_state: True,
@@ -44,6 +55,7 @@ class PlaybackCollectorTests(unittest.TestCase):
         self.assertEqual(collected.snapshot.track, track)
         self.assertEqual(collected.snapshot.timeline_state, "paused")
         self.assertEqual(collected.snapshot.force_idle_until_ts, 2.0)
+        self.assertFalse(sessions_kwargs["verify_tls"])
 
     def test_collect_skips_timeline_when_policy_says_no(self):
         runtime = RuntimeState(current_player_address="192.168.1.20", current_player_port=32500)
