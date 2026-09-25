@@ -12,6 +12,7 @@ class PlaybackCollectorConfig:
     plex_server: str
     plex_token: str
     http_timeout: int
+    plex_verify_tls: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +79,7 @@ def collect_playback_snapshot(
         timeout=config.http_timeout,
         log_warn=deps.log_warn,
         log_error=deps.log_error,
+        verify_tls=config.plex_verify_tls,
     )
     track = deps.find_player_track(sessions, config.player_name) if sessions else None
     update_current_player_context(runtime_state, track)
