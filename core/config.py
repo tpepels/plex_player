@@ -39,6 +39,7 @@ class Config:
 
     plex_server: str
     plex_token: str
+    plex_verify_tls: bool
     player_name: str
     latitude: float
     longitude: float
@@ -100,6 +101,7 @@ class Config:
         cfg = cls(
             plex_server=getenv("PLEX_SERVER", DEFAULT_PLEX_SERVER).strip().rstrip("/"),
             plex_token=getenv("PLEX_TOKEN", "").strip(),
+            plex_verify_tls=parse_bool("PLEX_VERIFY_TLS", "1"),
             player_name=getenv("PLAYER_NAME", DEFAULT_PLAYER_NAME).strip(),
             latitude=parse_float("LATITUDE", "0.0000"),
             longitude=parse_float("LONGITUDE", "0.0000"),
