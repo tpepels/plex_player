@@ -186,6 +186,7 @@ def env_float(name: str, default: str) -> float:
 # Assumption: these defaults are safe placeholders before validated config is applied.
 PLEX_SERVER = env("PLEX_SERVER", DEFAULT_PLEX_SERVER).rstrip("/")
 PLEX_TOKEN = env("PLEX_TOKEN", "")
+PLEX_VERIFY_TLS = env("PLEX_VERIFY_TLS", "1").strip().lower() in TRUTHY_ENV_VALUES
 PLAYER_NAME = env("PLAYER_NAME", DEFAULT_PLAYER_NAME)
 LATITUDE = 0.0
 LONGITUDE = 0.0
@@ -385,7 +386,7 @@ def validate_startup():
         sys.exit(1)
 
     _fields = (
-        "PLEX_SERVER", "PLEX_TOKEN", "PLAYER_NAME", "LATITUDE", "LONGITUDE",
+        "PLEX_SERVER", "PLEX_TOKEN", "PLEX_VERIFY_TLS", "PLAYER_NAME", "LATITUDE", "LONGITUDE",
         "TIMEZONE", "LOCATION_NAME", "FB_DEVICE", "WIDTH", "HEIGHT", "BUTTONS_ENABLED",
         "BUTTON_PLAY_PAUSE_PIN", "BUTTON_STOP_PIN", "BUTTON_NEXT_PIN", "BUTTON_BOUNCE_TIME",
         "BUTTON_LABEL_PLAY_Y_PERCENT", "BUTTON_LABEL_STOP_Y_PERCENT", "BUTTON_LABEL_NEXT_Y_PERCENT",
@@ -420,6 +421,7 @@ def button_controller_config() -> ButtonControllerConfig:
         toast_duration_seconds=TOAST_DURATION_SECONDS,
         no_track_grace_seconds=NO_TRACK_GRACE_SECONDS,
         command_confirm_seconds=COMMAND_CONFIRM_SECONDS,
+        plex_verify_tls=PLEX_VERIFY_TLS,
     )
 
 
@@ -759,6 +761,7 @@ def render_playing_frame(state: LoopState, track: PlexTrack, now_ts: float) -> N
             timeout=HTTP_TIMEOUT,
             log_warn=lambda msg: log_message("plex", msg, level="WARN", stderr=True),
             log_error=lambda msg: log_message("plex", msg, level="ERROR", stderr=True),
+            verify_tls=PLEX_VERIFY_TLS,
         )
 
     if state.cached_cover:
@@ -869,7 +872,13 @@ def main():
     setup_gpio_buttons()
 
     state = LoopState()
-    collector_config = PlaybackCollectorConfig(PLAYER_NAME, PLEX_SERVER, PLEX_TOKEN, HTTP_TIMEOUT)
+    collector_config = PlaybackCollectorConfig(
+        PLAYER_NAME,
+        PLEX_SERVER,
+        PLEX_TOKEN,
+        HTTP_TIMEOUT,
+        plex_verify_tls=PLEX_VERIFY_TLS,
+    )
     collector_deps = PlaybackCollectorDeps(
         fetch_sessions_json=fetch_sessions_json,
         find_player_track=find_player_track,
