@@ -6,6 +6,7 @@ small devices such as Raspberry Pi Zero-class boards.
 
 from dataclasses import dataclass
 import json
+import ssl
 from typing import Mapping, Optional
 from urllib.error import HTTPError
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -59,14 +60,22 @@ def get(
     params: Optional[Mapping[str, object]] = None,
     headers: Optional[Mapping[str, str]] = None,
     timeout: int | float = 10,
+    verify_tls: bool = True,
 ) -> HttpResponse:
     request = Request(
         _merge_query_params(url, params),
         headers=dict(headers or {}),
         method="GET",
     )
+    urlopen_kwargs = {"timeout": float(timeout)}
+    if not verify_tls:
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        urlopen_kwargs["context"] = context
+
     try:
-        with urlopen(request, timeout=float(timeout)) as response:
+        with urlopen(request, **urlopen_kwargs) as response:
             return HttpResponse(
                 status_code=getattr(response, "status", response.getcode()),
                 content=response.read(),
