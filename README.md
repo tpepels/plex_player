@@ -79,8 +79,9 @@ Start from [.env.example](.env.example) only if you want to manage `.env` yourse
 
 Most important values:
 
-- `PLEX_SERVER` (example: `http://192.168.1.200:32400`)
+- `PLEX_SERVER` (example: `https://192.168.1.200:32400`)
 - `PLEX_TOKEN`
+- `PLEX_VERIFY_TLS` (default `1`; set to `0` only for a trusted LAN Plex server addressed by raw IP when Plex's certificate does not match that IP)
 - `PLAYER_NAME` (can be filled automatically by `./setup_plexlcd.sh configure`)
 - `LATITUDE`, `LONGITUDE`, `TIMEZONE`
 - `FB_DEVICE`, `WIDTH`, `HEIGHT`
@@ -122,6 +123,10 @@ make run
 `./setup_plexlcd.sh configure` fails with Unauthorized during Plex detection:
 - Check `PLEX_SERVER`
 - Replace `PLEX_TOKEN` with a valid token
+
+App logs `CERTIFICATE_VERIFY_FAILED` for an HTTPS Plex server addressed by LAN IP:
+- Set `PLEX_VERIFY_TLS=0` in `.env` for that trusted local Plex server.
+- Keep TLS verification enabled when using a hostname with a valid matching certificate.
 
 App runs but says no album art:
 - Make sure `PLAYER_NAME` exactly matches the active Plex player session name
